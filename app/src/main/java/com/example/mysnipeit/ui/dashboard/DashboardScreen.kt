@@ -328,6 +328,7 @@ private fun VideoFeedSection(
         },
         onTargetSelect = onTargetSelect,
         onTargetLockToggle = onTargetLockToggle,
-        modifier = modifier
+        modifier = modifier,
+        videoStreamUrl = "rtsp://79.181.144.196:8554/stream"
     )
 }

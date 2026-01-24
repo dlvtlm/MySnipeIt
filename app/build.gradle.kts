@@ -87,6 +87,8 @@ dependencies {
     // Video streaming
     implementation("com.google.android.exoplayer:exoplayer:2.19.1")
     implementation("com.google.android.exoplayer:exoplayer-ui:2.19.1")
+    implementation("androidx.media3:media3-exoplayer-rtsp:1.2.0")
+
 
     // Google Maps for Compose
     implementation("com.google.maps.android:maps-compose:4.3.0")

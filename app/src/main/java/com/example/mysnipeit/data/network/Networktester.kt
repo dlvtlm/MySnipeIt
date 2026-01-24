@@ -28,9 +28,9 @@ class NetworkTester {
         return@withContext try {
             Log.d(TAG, "🔍 Testing connectivity to $ipAddress...")
 
-            // Try to connect to port 8080 as a "ping" test
+            // Try to connect to port 8555 as a "ping" test
             // If server is running, this is the most reliable test
-            val connected = testPort(ipAddress, 8080)
+            val connected = testPort(ipAddress, 8555)
 
             if (connected) {
                 Log.d(TAG, "✅ Device reachable: $ipAddress")

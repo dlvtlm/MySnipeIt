@@ -48,7 +48,7 @@ class SniperViewModel : ViewModel() {
                 latitude = 31.513963,
                 status = DeviceStatus.ACTIVE,
                 batteryLevel = 95,
-                ipAddress = "192.168.1.102"
+                ipAddress = "79.181.144.196"
             ),
             Device(
                 id = "device_4",
@@ -56,7 +56,7 @@ class SniperViewModel : ViewModel() {
                 location = "Sector D",
                 longitude = 34.452488,
                 latitude = 31.514924,
-                status = DeviceStatus.ACTIVE,
+                status = DeviceStatus.INACTIVE,
                 batteryLevel = 87,
                 ipAddress = "192.168.1.104"
             )

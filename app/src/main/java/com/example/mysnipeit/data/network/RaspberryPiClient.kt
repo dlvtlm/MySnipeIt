@@ -69,33 +69,43 @@ class RaspberryPiClient {
         try {
             Log.d(TAG, "🔌 Attempting to connect to RPi at $ipAddress")
 
-            val networkTester = NetworkTester()
-            val canPing = networkTester.pingDevice(ipAddress)
+//            val networkTester = NetworkTester()
+//            val canPing = networkTester.pingDevice(ipAddress)
+//
+  //          if (!canPing) {
+  //              Log.e(TAG, "Cannot ping device at $ipAddress")
+//                startMockDataGeneration()
+//                return@withContext
+//            }
+//
+//            Log.d(TAG, "Device is reachable")
+//
+ //           val portStatus = networkTester.scanPorts(
+ //               ipAddress,
+ //               listOf(WEBSOCKET_PORT, HTTP_PORT, VIDEO_STREAM_PORT)
+ //           )
+//
+//            Log.d(TAG, "Port scan results: $portStatus")
+//
+//            if (portStatus[WEBSOCKET_PORT] == true) {
+//                connectWebSocket(ipAddress)
+//            } else {
+//                Log.w(TAG, "WebSocket port not open, using mock data")
+//                startMockDataGeneration()
+//            }
+//
+//            if (portStatus[HTTP_PORT] == true) {
+//                testHttpApi(ipAddress)
+//            }
+            Log.d(TAG, "Attempting direct WebSocket connection...")
 
-            if (!canPing) {
-                Log.e(TAG, "Cannot ping device at $ipAddress")
-                startMockDataGeneration()
-                return@withContext
-            }
-
-            Log.d(TAG, "Device is reachable")
-
-            val portStatus = networkTester.scanPorts(
-                ipAddress,
-                listOf(WEBSOCKET_PORT, HTTP_PORT, VIDEO_STREAM_PORT)
-            )
-
-            Log.d(TAG, "Port scan results: $portStatus")
-
-            if (portStatus[WEBSOCKET_PORT] == true) {
+            try {
                 connectWebSocket(ipAddress)
-            } else {
-                Log.w(TAG, "WebSocket port not open, using mock data")
+                Log.d(TAG, "Successfully initiated WebSocket connection")
+            } catch (e: Exception) {
+                Log.e(TAG, "WebSocket connection failed: ${e.message}")
+                Log.w(TAG, "Falling back to mock data")
                 startMockDataGeneration()
-            }
-
-            if (portStatus[HTTP_PORT] == true) {
-                testHttpApi(ipAddress)
             }
 
             Log.d(TAG, " Successfully connected to RPi")

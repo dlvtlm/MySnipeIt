@@ -43,13 +43,14 @@ fun TacticalVideoPlayer(
     detectedTargets: List<DetectedTarget>,
     shootingSolution: ShootingSolution?,
     selectedTargetId: String?,
+    videoStreamUrl: String,
     onTargetClick: (DetectedTarget) -> Unit = {},
     onTargetLockToggle: (String, Boolean) -> Unit = { _, _ -> },
     onTargetSelect: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val exoPlayer = remember { createExoPlayer(context) }
+    val exoPlayer = remember { createExoPlayer(context, videoStreamUrl) }
 
     var scanlinePosition by remember { mutableStateOf(0f) }
     var videoTime by remember { mutableStateOf(0L) }
@@ -109,7 +110,8 @@ fun TacticalVideoPlayer(
             ScanLineOverlay(scanlinePosition)
 
             // Target markers
-            SimulatedTargets(videoTime).forEach { target ->
+            //SimulatedTargets(videoTime).forEach { target ->
+            detectedTargets.forEach { target ->
                 val isLocked = lockedTargetId == target.id
                 val isSelected = target.id == selectedTargetId
 
@@ -202,9 +204,11 @@ fun TacticalVideoPlayer(
     }
 }
 
-private fun createExoPlayer(context: Context): ExoPlayer {
+private fun createExoPlayer(context: Context, streamUrl: String): ExoPlayer {
     return ExoPlayer.Builder(context).build().apply {
-        val mediaItem = MediaItem.fromUri("android.resource://${context.packageName}/${R.raw.field_video}")
+       // val mediaItem = MediaItem.fromUri("android.resource://${context.packageName}/${R.raw.field_video}")
+
+        val mediaItem = MediaItem.fromUri(streamUrl)
         setMediaItem(mediaItem)
         repeatMode = Player.REPEAT_MODE_ALL
         playWhenReady = true
