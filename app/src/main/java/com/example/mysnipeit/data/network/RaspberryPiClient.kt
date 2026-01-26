@@ -67,7 +67,7 @@ class RaspberryPiClient {
      */
     suspend fun connect(ipAddress: String) = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "🔌 Attempting to connect to RPi at $ipAddress")
+            Log.d(TAG, "Attempting to connect to RPi at $ipAddress")
 
 //            val networkTester = NetworkTester()
 //            val canPing = networkTester.pingDevice(ipAddress)
@@ -118,7 +118,7 @@ class RaspberryPiClient {
     }
 
     private fun connectWebSocket(ipAddress: String) {
-        val wsUri = URI("ws://$ipAddress:$WEBSOCKET_PORT/sensor-data")
+        val wsUri = URI("ws://$ipAddress:$WEBSOCKET_PORT")
 
         webSocketClient = object : WebSocketClient(wsUri) {
             override fun onOpen(handshakedata: ServerHandshake?) {

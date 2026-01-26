@@ -1,6 +1,7 @@
 package com.example.mysnipeit.ui.dashboard
 
 import android.content.Context
+import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,6 +25,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
+import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -33,6 +35,8 @@ import com.example.mysnipeit.data.models.ShootingSolution
 import com.example.mysnipeit.ui.components.TacticalCompass
 import com.example.mysnipeit.ui.theme.*
 import kotlinx.coroutines.delay
+import com.example.mysnipeit.data.models.ConnectionState
+
 
 // Video resolution constants (hardcoded for POC)
 private const val VIDEO_WIDTH = 1920f
@@ -43,6 +47,7 @@ fun TacticalVideoPlayer(
     detectedTargets: List<DetectedTarget>,
     shootingSolution: ShootingSolution?,
     selectedTargetId: String?,
+    connectionState: ConnectionState,
     videoStreamUrl: String,
     onTargetClick: (DetectedTarget) -> Unit = {},
     onTargetLockToggle: (String, Boolean) -> Unit = { _, _ -> },
@@ -58,6 +63,19 @@ fun TacticalVideoPlayer(
     // Track locked target (only one at a time)
     var lockedTargetId by remember { mutableStateOf<String?>(null) }
 
+    LaunchedEffect(connectionState) {
+        if (connectionState == ConnectionState.CONNECTED) {
+            Log.d("TacticalVideoPlayer", "Connection established, loading RTSP stream: $videoStreamUrl")
+            val mediaItem = MediaItem.fromUri(videoStreamUrl)
+            exoPlayer.setMediaItem(mediaItem)
+            exoPlayer.playWhenReady = true
+            exoPlayer.prepare()
+        } else {
+            Log.d("TacticalVideoPlayer", "Not connected, clearing stream")
+            exoPlayer.stop()
+            exoPlayer.clearMediaItems()
+        }
+    }
     // Animate scanning line
     LaunchedEffect(Unit) {
         while (true) {
@@ -104,10 +122,10 @@ fun TacticalVideoPlayer(
         // Tactical overlays
         Box(modifier = Modifier.fillMaxSize()) {
             // Crosshair
-            CrosshairOverlay()
+           // CrosshairOverlay()
 
             // Scanning line
-            ScanLineOverlay(scanlinePosition)
+           // ScanLineOverlay(scanlinePosition)
 
             // Target markers
             //SimulatedTargets(videoTime).forEach { target ->
@@ -208,10 +226,17 @@ private fun createExoPlayer(context: Context, streamUrl: String): ExoPlayer {
     return ExoPlayer.Builder(context).build().apply {
        // val mediaItem = MediaItem.fromUri("android.resource://${context.packageName}/${R.raw.field_video}")
 
-        val mediaItem = MediaItem.fromUri(streamUrl)
-        setMediaItem(mediaItem)
+        //val mediaItem = MediaItem.fromUri(streamUrl)
+        // setMediaItem(mediaItem)
         repeatMode = Player.REPEAT_MODE_ALL
-        playWhenReady = true
+        // playWhenReady = true
+
+        //error listener
+        addListener(object : Player.Listener {
+            override fun onPlayerError(error: PlaybackException) {
+                android.util.Log.e("ExoPlayer", "Playback error: ${error.message}", error)
+            }
+        })
         prepare()
     }
 }
