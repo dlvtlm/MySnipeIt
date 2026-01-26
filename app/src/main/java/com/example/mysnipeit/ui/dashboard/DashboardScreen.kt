@@ -29,6 +29,8 @@ fun DashboardScreen(
     shootingSolution: ShootingSolution?,
     systemStatus: SystemStatus,
     selectedTargetId: String?,
+    streamReady: Boolean,
+    rtspStreamUrl: String?,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onTargetSelect: (String) -> Unit = {},
@@ -64,6 +66,8 @@ fun DashboardScreen(
                 shootingSolution = shootingSolution,
                 selectedTargetId = selectedTargetId,
                 systemStatus = systemStatus,
+                streamReady = streamReady,
+                rtspStreamUrl = rtspStreamUrl,
                 onTargetSelect = onTargetSelect,
                 onTargetLockToggle = onTargetLockToggle,
                 modifier = Modifier.fillMaxSize()
@@ -317,6 +321,8 @@ private fun VideoFeedSection(
     shootingSolution: ShootingSolution?,
     selectedTargetId: String?,
     systemStatus: SystemStatus,
+    streamReady: Boolean,
+    rtspStreamUrl: String?,
     onTargetSelect: (String) -> Unit,
     onTargetLockToggle: (String, Boolean) -> Unit,
     modifier: Modifier = Modifier
@@ -326,12 +332,13 @@ private fun VideoFeedSection(
         shootingSolution = shootingSolution,
         selectedTargetId = selectedTargetId,
         connectionState = systemStatus.connectionStatus,
+        streamReady = streamReady,
+        videoStreamUrl = rtspStreamUrl,
         onTargetClick = { target ->
             Log.d("Dashboard", "Target clicked: ${target.id}")
         },
         onTargetSelect = onTargetSelect,
         onTargetLockToggle = onTargetLockToggle,
         modifier = modifier,
-        videoStreamUrl = "rtsp://192.168.7.9:8554/stream"
     )
 }

@@ -15,6 +15,11 @@ class SniperViewModel : ViewModel() {
     private val repository = SniperRepository()
 
     private val _uiState = MutableStateFlow(SniperUiState())
+
+    val streamReady: StateFlow<Boolean> = repository.streamReady
+    val rtspStreamUrl: StateFlow<String?> = repository.rtspStreamUrl
+
+
     val uiState: StateFlow<SniperUiState> = _uiState.asStateFlow()
 
     // All 4 devices

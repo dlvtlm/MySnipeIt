@@ -48,14 +48,15 @@ fun TacticalVideoPlayer(
     shootingSolution: ShootingSolution?,
     selectedTargetId: String?,
     connectionState: ConnectionState,
-    videoStreamUrl: String,
+    streamReady: Boolean,
+    videoStreamUrl: String?,
     onTargetClick: (DetectedTarget) -> Unit = {},
     onTargetLockToggle: (String, Boolean) -> Unit = { _, _ -> },
     onTargetSelect: (String) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
-    val exoPlayer = remember { createExoPlayer(context, videoStreamUrl) }
+    val exoPlayer = remember { createExoPlayer(context) }
 
     var scanlinePosition by remember { mutableStateOf(0f) }
     var videoTime by remember { mutableStateOf(0L) }
@@ -63,19 +64,27 @@ fun TacticalVideoPlayer(
     // Track locked target (only one at a time)
     var lockedTargetId by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(connectionState) {
-        if (connectionState == ConnectionState.CONNECTED) {
-            Log.d("TacticalVideoPlayer", "Connection established, loading RTSP stream: $videoStreamUrl")
+    // Load stream only when both connected AND stream is ready
+    LaunchedEffect(connectionState, streamReady, videoStreamUrl) {
+        if (connectionState == ConnectionState.CONNECTED &&
+            streamReady &&
+            videoStreamUrl != null) {
+
+            Log.d("TacticalVideoPlayer", "Stream ready signal received, loading: $videoStreamUrl")
             val mediaItem = MediaItem.fromUri(videoStreamUrl)
             exoPlayer.setMediaItem(mediaItem)
             exoPlayer.playWhenReady = true
             exoPlayer.prepare()
+
         } else {
-            Log.d("TacticalVideoPlayer", "Not connected, clearing stream")
+            if (!streamReady) {
+                Log.d("TacticalVideoPlayer", "Waiting for stream_ready signal from server...")
+            }
             exoPlayer.stop()
             exoPlayer.clearMediaItems()
         }
     }
+
     // Animate scanning line
     LaunchedEffect(Unit) {
         while (true) {
@@ -222,7 +231,7 @@ fun TacticalVideoPlayer(
     }
 }
 
-private fun createExoPlayer(context: Context, streamUrl: String): ExoPlayer {
+private fun createExoPlayer(context: Context): ExoPlayer {
     return ExoPlayer.Builder(context).build().apply {
        // val mediaItem = MediaItem.fromUri("android.resource://${context.packageName}/${R.raw.field_video}")
 
@@ -237,7 +246,7 @@ private fun createExoPlayer(context: Context, streamUrl: String): ExoPlayer {
                 android.util.Log.e("ExoPlayer", "Playback error: ${error.message}", error)
             }
         })
-        prepare()
+        // prepare() is called now in the launchedEffect when device is connected ,i will be delete later if not needed
     }
 }
 

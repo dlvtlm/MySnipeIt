@@ -22,6 +22,10 @@ class SniperRepository {
     val shootingSolution: StateFlow<ShootingSolution?> = raspberryPiClient.shootingSolution
     val systemStatus: StateFlow<SystemStatus> = raspberryPiClient.systemStatus
 
+    val streamReady: StateFlow<Boolean> = raspberryPiClient.streamReady
+    val rtspStreamUrl: StateFlow<String?> = raspberryPiClient.rtspStreamUrl
+
+
 
     suspend fun connectToSystem(ipAddress: String) {
         currentIpAddress = ipAddress

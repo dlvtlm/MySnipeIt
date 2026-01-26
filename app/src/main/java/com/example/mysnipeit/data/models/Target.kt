@@ -14,7 +14,8 @@ data class DetectedTarget(
     @SerializedName("class")
     val targetType: String,  // "HUMAN", "VEHICLE", etc.
     val confidence: Float,
-    val bbox: BoundingBox
+    val bbox: BoundingBox,
+    val timestamp: Long = 0L
 )
 
 enum class TargetType {

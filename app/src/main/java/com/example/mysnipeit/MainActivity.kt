@@ -25,6 +25,7 @@ import com.example.mysnipeit.ui.diagnostics.DiagnosticsScreen
 class MainActivity : ComponentActivity() {
     private val viewModel: SniperViewModel by viewModels()
 
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContent {
@@ -49,6 +50,9 @@ fun SniperApp(viewModel: SniperViewModel) {
     val shootingSolution by viewModel.shootingSolution.collectAsStateWithLifecycle()
     val systemStatus by viewModel.systemStatus.collectAsStateWithLifecycle()
     val selectedTargetId = uiState.selectedTargetId
+    val streamReady by viewModel.streamReady.collectAsState()
+    val rtspStreamUrl by viewModel.rtspStreamUrl.collectAsState()
+
 
     // User location (mock location for now - can be replaced with real GPS later)
     val userLocation = remember { LatLng( 31.518209, 34.521274) }
@@ -100,6 +104,8 @@ fun SniperApp(viewModel: SniperViewModel) {
                 shootingSolution = shootingSolution,
                 systemStatus = systemStatus,
                 selectedTargetId = selectedTargetId,
+                streamReady = streamReady,
+                rtspStreamUrl = rtspStreamUrl,
                 onTargetSelect = { targetId ->
                     if (targetId.isEmpty()) {
                         viewModel.deselectTarget()

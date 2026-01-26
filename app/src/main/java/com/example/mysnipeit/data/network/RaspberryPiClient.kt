@@ -30,9 +30,18 @@ class RaspberryPiClient {
     private var webSocketClient: WebSocketClient? = null
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
 
+    private var currentIpAddress: String? = null
+
+
     // Sensor data from RPi
     private val _sensorData = MutableStateFlow<SensorData?>(null)
     val sensorData: StateFlow<SensorData?> = _sensorData.asStateFlow()
+
+    private val _streamReady = MutableStateFlow(false)
+    val streamReady: StateFlow<Boolean> = _streamReady.asStateFlow()
+
+    private val _rtspStreamUrl = MutableStateFlow<String?>(null)
+    val rtspStreamUrl: StateFlow<String?> = _rtspStreamUrl.asStateFlow()
 
     // Detected targets from RPi
     private val _detectedTargets = MutableStateFlow<List<DetectedTarget>>(emptyList())
@@ -67,6 +76,7 @@ class RaspberryPiClient {
      */
     suspend fun connect(ipAddress: String) = withContext(Dispatchers.IO) {
         try {
+            currentIpAddress = ipAddress
             Log.d(TAG, "Attempting to connect to RPi at $ipAddress")
 
 //            val networkTester = NetworkTester()
@@ -133,6 +143,8 @@ class RaspberryPiClient {
             override fun onClose(code: Int, reason: String?, remote: Boolean) {
                 Log.d(TAG, "WebSocket closed: $reason")
                 updateSystemStatus(ConnectionState.DISCONNECTED)
+                _streamReady.value = false
+                _rtspStreamUrl.value = null
             }
 
             override fun onError(ex: Exception?) {
@@ -148,7 +160,9 @@ class RaspberryPiClient {
         try {
             Log.d(TAG, " Received: $message")
 
-            val dataType = gson.fromJson(message, Map::class.java)["type"] as? String
+            //val dataType = gson.fromJson(message, Map::class.java)["type"] as? String
+            val messageMap = gson.fromJson(message, Map::class.java)
+            val dataType = messageMap["type"] as? String ?: messageMap["event"] as? String
 
             when (dataType) {
                 "sensor_data" -> {
@@ -158,6 +172,7 @@ class RaspberryPiClient {
                 "target_detection" -> {
                     // Parse RPi5 format with detections array
                     val detectionData = gson.fromJson(message, Map::class.java)
+                    val timestampMs = (detectionData["timestamp_ms"] as? Double)?.toLong() ?: System.currentTimeMillis()
                     val detectionsArray = detectionData["detections"] as? List<Map<String, Any>>
 
                     if (detectionsArray != null) {
@@ -174,7 +189,8 @@ class RaspberryPiClient {
                                             y = (bboxMap["y"] as? Double)?.toInt() ?: 0,
                                             width = (bboxMap["width"] as? Double)?.toInt() ?: 0,
                                             height = (bboxMap["height"] as? Double)?.toInt() ?: 0
-                                        )
+                                        ),
+                                        timestamp = timestampMs
                                     )
                                 } else null
                             } catch (e: Exception) {
@@ -183,7 +199,7 @@ class RaspberryPiClient {
                             }
                         }
                         _detectedTargets.value = targets
-                        Log.d(TAG, "Parsed ${targets.size} targets from RPi5")
+                        Log.d(TAG, "Parsed ${targets.size} targets from RPi5 at timestamp $timestampMs")
                     }
                 }
                 "shooting_solution" -> {
@@ -199,6 +215,19 @@ class RaspberryPiClient {
                     )
                     _shootingSolution.value = solution
                     Log.d(TAG, "Received shooting solution for ${solution.targetId}")
+                }
+                "stream_ready" -> {
+                    val streamData = gson.fromJson(message, Map::class.java)
+                    val rtspPort = (streamData["rtsp_port"] as? Double)?.toInt() ?: 8554
+                    val streamName = streamData["stream_name"] as? String ?: "stream"
+
+                    // Extract IP from WebSocket connection (same IP as WebSocket)
+                    val ipAddress = currentIpAddress  // You'll need to store this
+                    val rtspUrl = "rtsp://$ipAddress:$rtspPort/$streamName"
+
+                    Log.d(TAG, "Stream ready at: $rtspUrl")
+                    _rtspStreamUrl.value = rtspUrl
+                    _streamReady.value = true
                 }
                 "system_status" -> {
                     val status = gson.fromJson(message, SystemStatus::class.java)
