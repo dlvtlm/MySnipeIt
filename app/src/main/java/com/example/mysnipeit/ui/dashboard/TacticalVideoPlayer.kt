@@ -27,7 +27,9 @@ import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.ui.PlayerView
 import com.example.mysnipeit.R
 import com.example.mysnipeit.data.models.DetectedTarget
@@ -71,8 +73,13 @@ fun TacticalVideoPlayer(
             videoStreamUrl != null) {
 
             Log.d("TacticalVideoPlayer", "Stream ready signal received, loading: $videoStreamUrl")
-            val mediaItem = MediaItem.fromUri(videoStreamUrl)
-            exoPlayer.setMediaItem(mediaItem)
+            // Force RTP-over-TCP to match the Pi's `-rtsp_transport tcp` and avoid
+            // UDP packet loss / firewall issues on the AP network.
+            val mediaSource = RtspMediaSource.Factory()
+                .setForceUseRtpTcp(true)
+                .setTimeoutMs(8000)
+                .createMediaSource(MediaItem.fromUri(videoStreamUrl))
+            exoPlayer.setMediaSource(mediaSource)
             exoPlayer.playWhenReady = true
             exoPlayer.prepare()
 
@@ -114,22 +121,32 @@ fun TacticalVideoPlayer(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .background(Color.Black)
+            .background(Color.Black),
+        contentAlignment = Alignment.Center
     ) {
-        // Video player
-        AndroidView(
-            factory = { ctx ->
-                PlayerView(ctx).apply {
-                    player = exoPlayer
-                    useController = false
-                    setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
-                }
-            },
-            modifier = Modifier.fillMaxSize()
-        )
+        // Constrain the video + overlay region to the source 16:9 aspect ratio.
+        // This keeps detection bbox coordinates aligned with the rendered video
+        // even on tablets that aren't exactly 16:9 (no pillarbox/letterbox math
+        // needed in EnhancedTargetMarker).
+        Box(
+            modifier = Modifier
+                .aspectRatio(VIDEO_WIDTH / VIDEO_HEIGHT)
+                .background(Color.Black)
+        ) {
+            // Video player
+            AndroidView(
+                factory = { ctx ->
+                    PlayerView(ctx).apply {
+                        player = exoPlayer
+                        useController = false
+                        setShowBuffering(PlayerView.SHOW_BUFFERING_NEVER)
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
+            )
 
-        // Tactical overlays
-        Box(modifier = Modifier.fillMaxSize()) {
+            // Tactical overlays
+            Box(modifier = Modifier.fillMaxSize()) {
             // Crosshair
            // CrosshairOverlay()
 
@@ -227,27 +244,36 @@ fun TacticalVideoPlayer(
                     )
                 }
             }
-        }
-    }
+            } // end overlays Box
+        } // end aspect-ratio video Box
+    } // end outer black Box
 }
 
 private fun createExoPlayer(context: Context): ExoPlayer {
-    return ExoPlayer.Builder(context).build().apply {
-       // val mediaItem = MediaItem.fromUri("android.resource://${context.packageName}/${R.raw.field_video}")
+    // Low-latency LoadControl tuned for live RTSP. ExoPlayer's defaults are
+    // VOD-oriented (~50s buffer) which adds 1-3s of perceived lag. These
+    // values keep us under ~1s of buffered data.
+    val loadControl = DefaultLoadControl.Builder()
+        .setBufferDurationsMs(
+            /* minBufferMs = */              250,
+            /* maxBufferMs = */              1000,
+            /* bufferForPlaybackMs = */      100,
+            /* bufferForPlaybackAfterRebufferMs = */ 250
+        )
+        .setPrioritizeTimeOverSizeThresholds(true)
+        .build()
 
-        //val mediaItem = MediaItem.fromUri(streamUrl)
-        // setMediaItem(mediaItem)
-        repeatMode = Player.REPEAT_MODE_ALL
-        // playWhenReady = true
+    return ExoPlayer.Builder(context)
+        .setLoadControl(loadControl)
+        .build().apply {
+            repeatMode = Player.REPEAT_MODE_ALL
 
-        //error listener
-        addListener(object : Player.Listener {
-            override fun onPlayerError(error: PlaybackException) {
-                android.util.Log.e("ExoPlayer", "Playback error: ${error.message}", error)
-            }
-        })
-        // prepare() is called now in the launchedEffect when device is connected ,i will be delete later if not needed
-    }
+            addListener(object : Player.Listener {
+                override fun onPlayerError(error: PlaybackException) {
+                    android.util.Log.e("ExoPlayer", "Playback error: ${error.message}", error)
+                }
+            })
+        }
 }
 
 @Composable
@@ -336,103 +362,79 @@ private fun EnhancedTargetMarker(
     }
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        // Convert bbox pixels to screen position
-        // bbox coordinates are in pixels relative to video resolution (1920x1080)
-        val xPos = maxWidth * (target.bbox.x.toFloat() / VIDEO_WIDTH)
-        val yPos = maxHeight * (target.bbox.y.toFloat() / VIDEO_HEIGHT)
-        val boxWidth = maxWidth * (target.bbox.width.toFloat() / VIDEO_WIDTH)
+        // Convert bbox pixel coordinates (relative to 1920x1080) to local Dp.
+        // The parent BoxWithConstraints is the 16:9 video region (set up in the
+        // outer aspect-ratio Box), so these ratios map 1:1 to rendered video pixels.
+        val xPos     = maxWidth  * (target.bbox.x.toFloat()      / VIDEO_WIDTH)
+        val yPos     = maxHeight * (target.bbox.y.toFloat()      / VIDEO_HEIGHT)
+        val boxWidth  = maxWidth  * (target.bbox.width.toFloat()  / VIDEO_WIDTH)
         val boxHeight = maxHeight * (target.bbox.height.toFloat() / VIDEO_HEIGHT)
 
         Box(
             modifier = Modifier
                 .offset(x = xPos, y = yPos)
-                .clickable { onTargetClick() }  // ← Make target clickable for selection
+                .size(width = boxWidth, height = boxHeight)
+                .clickable { onTargetClick() }
         ) {
-            // Target box
-            Canvas(modifier = Modifier.size(80.dp)) {
-                val boxSize = when {
-                    isSelected -> 65f  // Largest
-                    isLocked -> 60f    // Medium
-                    else -> 50f        // Small
-                }
-                val centerX = size.width / 2
-                val centerY = size.height / 2
+            // Target rectangle that fills the actual bbox area
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val w = size.width
+                val h = size.height
                 val strokeWidth = when {
-                    isSelected -> 5f   // Thickest
-                    isLocked -> 4f     // Medium
-                    else -> 3f         // Thin
+                    isSelected -> 5f
+                    isLocked   -> 4f
+                    else       -> 3f
                 }
 
-                // Draw target box
+                // Main bounding rectangle
                 drawRect(
                     color = markerColor.copy(alpha = pulseAlpha),
-                    topLeft = Offset(centerX - boxSize / 2, centerY - boxSize / 2),
-                    size = Size(boxSize, boxSize),
+                    topLeft = Offset(0f, 0f),
+                    size = Size(w, h),
                     style = Stroke(width = strokeWidth)
                 )
 
-                //  Pulsing glow for selected target
+                // Pulsing outer glow for selected target
                 if (isSelected) {
                     drawRect(
                         color = markerColor.copy(alpha = 0.3f),
-                        topLeft = Offset(centerX - boxSize / 2 - 4, centerY - boxSize / 2 - 4),
-                        size = Size(boxSize + 8, boxSize + 8),
+                        topLeft = Offset(-4f, -4f),
+                        size = Size(w + 8, h + 8),
                         style = Stroke(width = 2f)
                     )
                 }
 
-                // Corner brackets
-                val bracketSize = 15f
-                val positions = listOf(
-                    Offset(centerX - boxSize / 2, centerY - boxSize / 2),
-                    Offset(centerX + boxSize / 2 - bracketSize, centerY - boxSize / 2),
-                    Offset(centerX - boxSize / 2, centerY + boxSize / 2 - bracketSize),
-                    Offset(centerX + boxSize / 2 - bracketSize, centerY + boxSize / 2 - bracketSize)
+                // Corner brackets, scaled to ~20% of the smaller bbox side
+                val bracketSize = (minOf(w, h) * 0.2f).coerceAtMost(24f)
+                val corners = listOf(
+                    Offset(0f, 0f),                       // top-left
+                    Offset(w - bracketSize, 0f),          // top-right
+                    Offset(0f, h - bracketSize),          // bottom-left
+                    Offset(w - bracketSize, h - bracketSize) // bottom-right
                 )
-
-                positions.forEach { pos ->
-                    drawLine(
-                        color = markerColor,
-                        start = pos,
-                        end = Offset(pos.x + bracketSize, pos.y),
-                        strokeWidth = strokeWidth
-                    )
-                    drawLine(
-                        color = markerColor,
-                        start = pos,
-                        end = Offset(pos.x, pos.y + bracketSize),
-                        strokeWidth = strokeWidth
-                    )
+                corners.forEach { pos ->
+                    drawLine(markerColor, pos, Offset(pos.x + bracketSize, pos.y), strokeWidth)
+                    drawLine(markerColor, pos, Offset(pos.x, pos.y + bracketSize), strokeWidth)
                 }
 
-                // Center crosshair
-                val crosshairSize = 12f
-                drawLine(
-                    color = markerColor,
-                    start = Offset(centerX - crosshairSize, centerY),
-                    end = Offset(centerX + crosshairSize, centerY),
-                    strokeWidth = 2f
-                )
-                drawLine(
-                    color = markerColor,
-                    start = Offset(centerX, centerY - crosshairSize),
-                    end = Offset(centerX, centerY + crosshairSize),
-                    strokeWidth = 2f
-                )
+                // Center crosshair, scaled to ~10% of the smaller side
+                val cx = w / 2f
+                val cy = h / 2f
+                val crosshair = (minOf(w, h) * 0.1f).coerceAtMost(14f)
+                drawLine(markerColor, Offset(cx - crosshair, cy), Offset(cx + crosshair, cy), 2f)
+                drawLine(markerColor, Offset(cx, cy - crosshair), Offset(cx, cy + crosshair), 2f)
 
-                // Lock indicator
+                // Lock indicator (top-right inside the bbox)
                 if (isLocked) {
                     val lockSize = 12f
-                    val lockX = centerX + boxSize / 2 - lockSize - 8f
-                    val lockY = centerY - boxSize / 2 + 8f
-
+                    val lockX = w - lockSize - 8f
+                    val lockY = 8f
                     drawRect(
                         color = markerColor,
                         topLeft = Offset(lockX, lockY + lockSize * 0.4f),
                         size = Size(lockSize, lockSize * 0.6f),
                         style = Stroke(width = 2f)
                     )
-
                     drawArc(
                         color = markerColor,
                         startAngle = 180f,
@@ -444,33 +446,23 @@ private fun EnhancedTargetMarker(
                     )
                 }
 
-                //  Selection indicator (star/asterisk for selected)
+                // Selection indicator (asterisk top-left inside the bbox)
                 if (isSelected) {
                     val starSize = 8f
-                    val starX = centerX - boxSize / 2 + 8f
-                    val starY = centerY - boxSize / 2 + 8f
-
-                    // Draw asterisk/star
-                    drawLine(
-                        color = markerColor,
-                        start = Offset(starX - starSize, starY),
-                        end = Offset(starX + starSize, starY),
-                        strokeWidth = 3f
-                    )
-                    drawLine(
-                        color = markerColor,
-                        start = Offset(starX, starY - starSize),
-                        end = Offset(starX, starY + starSize),
-                        strokeWidth = 3f
-                    )
+                    val starX = 8f + starSize
+                    val starY = 8f + starSize
+                    drawLine(markerColor, Offset(starX - starSize, starY),
+                             Offset(starX + starSize, starY), 3f)
+                    drawLine(markerColor, Offset(starX, starY - starSize),
+                             Offset(starX, starY + starSize), 3f)
                 }
             }
 
-            // Target info card
+            // Target info card anchored just below the bbox
             Card(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .offset(y = 50.dp),
+                    .offset(y = boxHeight + 6.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = Color.Black.copy(alpha = 0.85f)
                 ),
@@ -647,4 +639,5 @@ private fun VideoStatusOverlay(modifier: Modifier = Modifier) {
             fontFamily = FontFamily.Monospace
         )
     }
+}
 }

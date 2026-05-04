@@ -180,16 +180,22 @@ class RaspberryPiClient {
                             try {
                                 val bboxMap = detection["bbox"] as? Map<String, Any>
                                 if (bboxMap != null) {
+                                    val bbox = BoundingBox(
+                                        x = (bboxMap["x"] as? Double)?.toInt() ?: 0,
+                                        y = (bboxMap["y"] as? Double)?.toInt() ?: 0,
+                                        width = (bboxMap["width"] as? Double)?.toInt() ?: 0,
+                                        height = (bboxMap["height"] as? Double)?.toInt() ?: 0
+                                    )
+                                    val id = detection["id"] as? String ?: "UNKNOWN"
+                                    val cls = detection["class"] as? String ?: "UNKNOWN"
+                                    val conf = (detection["confidence"] as? Double)?.toFloat() ?: 0f
+                                    Log.d(TAG, "  detection id=$id class=$cls conf=$conf " +
+                                            "bbox(x=${bbox.x}, y=${bbox.y}, w=${bbox.width}, h=${bbox.height})")
                                     DetectedTarget(
-                                        id = detection["id"] as? String ?: "UNKNOWN",
-                                        targetType = detection["class"] as? String ?: "UNKNOWN",
-                                        confidence = (detection["confidence"] as? Double)?.toFloat() ?: 0f,
-                                        bbox = BoundingBox(
-                                            x = (bboxMap["x"] as? Double)?.toInt() ?: 0,
-                                            y = (bboxMap["y"] as? Double)?.toInt() ?: 0,
-                                            width = (bboxMap["width"] as? Double)?.toInt() ?: 0,
-                                            height = (bboxMap["height"] as? Double)?.toInt() ?: 0
-                                        ),
+                                        id = id,
+                                        targetType = cls,
+                                        confidence = conf,
+                                        bbox = bbox,
                                         timestamp = timestampMs
                                     )
                                 } else null
