@@ -3,6 +3,7 @@ package com.example.mysnipeit.data.network
 import android.util.Log
 import com.example.mysnipeit.data.models.*
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -24,6 +25,16 @@ class RaspberryPiClient {
         private const val WEBSOCKET_PORT = 8555
         private const val HTTP_PORT = 8000
         private const val VIDEO_STREAM_PORT = 8554
+
+        // Detection pacing — smooth WS bursts to a max output rate
+        private const val PACER_MIN_OUTPUT_INTERVAL_MS = 100L
+
+        // Stale detection auto-clear — drop bboxes if Pi stops sending them
+        private const val STALENESS_CHECK_INTERVAL_MS = 500L
+        private const val STALENESS_TIMEOUT_MS = 1500L
+
+        // WS keepalive — prevent NAT/router idle timeouts
+        private const val KEEPALIVE_INTERVAL_MS = 20_000L
     }
 
     private val gson = Gson()
@@ -70,6 +81,29 @@ class RaspberryPiClient {
 
     // Mock data generator
     private var mockDataJob: Job? = null
+
+    // --- Detection pacing (A) -----------------------------------------------
+    // Bursts on the WS (e.g. Pi sending 130 detections in 300ms) get smoothed
+    // by a single consumer coroutine that drains to the most-recent item and
+    // throttles output to a sane refresh rate.
+    private val detectionQueue =
+        Channel<Pair<List<DetectedTarget>, Long>>(Channel.UNLIMITED)
+    private var detectionPacerJob: Job? = null
+
+    // --- Staleness watchdog (C) ---------------------------------------------
+    // If the Pi stops sending detections (e.g. detector died, video ended,
+    // network dropped silently), wipe stale bboxes after STALENESS_TIMEOUT_MS
+    // so the user doesn't see a frozen overlay.
+    @Volatile private var lastWsDetectionAt: Long = 0L
+    private var stalenessJob: Job? = null
+
+    // --- WS keepalive (B) ---------------------------------------------------
+    private var keepaliveJob: Job? = null
+
+    init {
+        startDetectionPacer()
+        startStalenessChecker()
+    }
 
     /**
      * Connect to Raspberry Pi
@@ -134,6 +168,7 @@ class RaspberryPiClient {
             override fun onOpen(handshakedata: ServerHandshake?) {
                 Log.d(TAG, "WebSocket connected")
                 updateSystemStatus(ConnectionState.CONNECTED)
+                startKeepalive()
             }
 
             override fun onMessage(message: String?) {
@@ -142,6 +177,7 @@ class RaspberryPiClient {
 
             override fun onClose(code: Int, reason: String?, remote: Boolean) {
                 Log.d(TAG, "WebSocket closed: $reason")
+                stopKeepalive()
                 updateSystemStatus(ConnectionState.DISCONNECTED)
                 _streamReady.value = false
                 _rtspStreamUrl.value = null
@@ -204,8 +240,13 @@ class RaspberryPiClient {
                                 null
                             }
                         }
-                        _detectedTargets.value = targets
-                        Log.d(TAG, "Parsed ${targets.size} targets from RPi5 at timestamp $timestampMs")
+                        // Hand off to the pacer instead of setting state directly.
+                        // Bursts (e.g. 130 detections in 300ms) get coalesced to
+                        // the most-recent value and emitted at most every
+                        // PACER_MIN_OUTPUT_INTERVAL_MS.
+                        detectionQueue.trySend(targets to timestampMs)
+                        lastWsDetectionAt = System.currentTimeMillis()
+                        Log.d(TAG, "Queued ${targets.size} targets from RPi5 at timestamp $timestampMs")
                     }
                 }
                 "shooting_solution" -> {
@@ -418,11 +459,18 @@ class RaspberryPiClient {
     fun disconnect() {
         Log.d(TAG, "🔌 Disconnecting from RPi")
 
+        stopKeepalive()
+
         webSocketClient?.close()
         webSocketClient = null
 
         mockDataJob?.cancel()
         mockDataJob = null
+
+        // Drain any pending detections from the pacer queue and reset
+        // staleness tracking so the next connection starts fresh.
+        while (detectionQueue.tryReceive().isSuccess) { /* drop */ }
+        lastWsDetectionAt = 0L
 
         _systemStatus.value = _systemStatus.value.copy(
             connectionStatus = ConnectionState.DISCONNECTED
@@ -434,6 +482,105 @@ class RaspberryPiClient {
 
     fun isConnected(): Boolean {
         return _systemStatus.value.connectionStatus == ConnectionState.CONNECTED
+    }
+
+    // ------------------------------------------------------------------------
+    // (A) Detection pacer
+    // Reads from detectionQueue, drains to the latest available item (so a
+    // burst of 130 messages becomes 1 emission of the freshest data), then
+    // throttles output to at most ~10Hz.
+    // ------------------------------------------------------------------------
+    private fun startDetectionPacer() {
+        detectionPacerJob?.cancel()
+        detectionPacerJob = scope.launch {
+            var lastEmitAt = 0L
+            while (isActive) {
+                // Suspend until at least one detection arrives
+                var latest: Pair<List<DetectedTarget>, Long> = detectionQueue.receive()
+                var dropped = 0
+
+                // Drain everything else queued behind it; keep only the newest.
+                // This is what smooths burst arrivals — when the Pi dumps 130
+                // messages in 300ms we render the most recent one once, not 130
+                // times in succession.
+                while (true) {
+                    val r = detectionQueue.tryReceive()
+                    if (r.isSuccess) {
+                        latest = r.getOrThrow()
+                        dropped++
+                    } else break
+                }
+                if (dropped > 0) {
+                    Log.d(TAG, "Pacer coalesced $dropped older detections; emitting ts=${latest.second}")
+                }
+
+                // Enforce minimum gap between emissions
+                val sinceLast = System.currentTimeMillis() - lastEmitAt
+                if (sinceLast < PACER_MIN_OUTPUT_INTERVAL_MS) {
+                    delay(PACER_MIN_OUTPUT_INTERVAL_MS - sinceLast)
+                }
+
+                _detectedTargets.value = latest.first
+                lastEmitAt = System.currentTimeMillis()
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // (C) Stale detection clear
+    // If no WS detection has been received for STALENESS_TIMEOUT_MS, wipe the
+    // current bbox overlay so the user doesn't stare at a frozen box from a
+    // long-dead detection. Resets itself after clearing so it doesn't fight
+    // the mock-data fallback (which sets _detectedTargets directly without
+    // touching lastWsDetectionAt).
+    // ------------------------------------------------------------------------
+    private fun startStalenessChecker() {
+        stalenessJob?.cancel()
+        stalenessJob = scope.launch {
+            while (isActive) {
+                delay(STALENESS_CHECK_INTERVAL_MS)
+                val last = lastWsDetectionAt
+                if (last > 0 && System.currentTimeMillis() - last > STALENESS_TIMEOUT_MS) {
+                    if (_detectedTargets.value.isNotEmpty()) {
+                        Log.d(TAG, "No WS detections for >${STALENESS_TIMEOUT_MS}ms — clearing stale bboxes")
+                        _detectedTargets.value = emptyList()
+                    }
+                    // Reset so we don't re-clear every tick
+                    lastWsDetectionAt = 0L
+                }
+            }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // (B) WS keepalive ping
+    // Sends a small JSON ping every KEEPALIVE_INTERVAL_MS to prevent NAT or
+    // router idle timeouts from killing the WS connection. Unknown message
+    // types fall through silently on the C server, so no Pi change is needed.
+    // ------------------------------------------------------------------------
+    private fun startKeepalive() {
+        stopKeepalive()
+        keepaliveJob = scope.launch {
+            while (isActive) {
+                delay(KEEPALIVE_INTERVAL_MS)
+                try {
+                    val ping = mapOf(
+                        "type" to "ping",
+                        "timestamp" to System.currentTimeMillis()
+                    )
+                    webSocketClient?.send(gson.toJson(ping))
+                    Log.d(TAG, "Sent WS keepalive ping")
+                } catch (e: Exception) {
+                    Log.w(TAG, "Keepalive ping failed: ${e.message}")
+                    break
+                }
+            }
+        }
+    }
+
+    private fun stopKeepalive() {
+        keepaliveJob?.cancel()
+        keepaliveJob = null
     }
 }
 
