@@ -29,9 +29,11 @@ class RaspberryPiClient {
         // Detection pacing — smooth WS bursts to a max output rate
         private const val PACER_MIN_OUTPUT_INTERVAL_MS = 100L
 
-        // Stale detection auto-clear — drop bboxes if Pi stops sending them
+        // Stale detection auto-clear — drop bboxes if Pi stops sending them.
+        // Tuned to 5s so brief silences between bursty Pi deliveries don't
+        // wipe the overlay; still short enough to clear if the detector dies.
         private const val STALENESS_CHECK_INTERVAL_MS = 500L
-        private const val STALENESS_TIMEOUT_MS = 1500L
+        private const val STALENESS_TIMEOUT_MS = 5000L
 
         // WS keepalive — prevent NAT/router idle timeouts
         private const val KEEPALIVE_INTERVAL_MS = 20_000L
