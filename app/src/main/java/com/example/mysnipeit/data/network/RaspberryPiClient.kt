@@ -29,6 +29,11 @@ class RaspberryPiClient {
         // Detection pacing — smooth WS bursts to a max output rate
         private const val PACER_MIN_OUTPUT_INTERVAL_MS = 100L
 
+        // Detection grace period — keep showing the last non-empty detections
+        // briefly when the model misses 1-2 frames (ML is noisy; without this
+        // bboxes flicker on/off at the 0.5 confidence boundary).
+        private const val DETECTION_GRACE_PERIOD_MS = 500L
+
         // Stale detection auto-clear — drop bboxes if Pi stops sending them.
         // Tuned to 5s so brief silences between bursty Pi deliveries don't
         // wipe the overlay; still short enough to clear if the detector dies.
@@ -496,6 +501,7 @@ class RaspberryPiClient {
         detectionPacerJob?.cancel()
         detectionPacerJob = scope.launch {
             var lastEmitAt = 0L
+            var lastNonEmptyAt = 0L
             while (isActive) {
                 // Suspend until at least one detection arrives
                 var latest: Pair<List<DetectedTarget>, Long> = detectionQueue.receive()
@@ -522,8 +528,26 @@ class RaspberryPiClient {
                     delay(PACER_MIN_OUTPUT_INTERVAL_MS - sinceLast)
                 }
 
-                _detectedTargets.value = latest.first
-                lastEmitAt = System.currentTimeMillis()
+                val now = System.currentTimeMillis()
+                val (targets, _) = latest
+
+                // Grace period: if the latest detection is empty but we recently
+                // had a non-empty result, hold the previous overlay rather than
+                // clearing it — smooths the on/off flicker caused by the ML
+                // model briefly losing confidence in an in-frame target.
+                val withinGrace = targets.isEmpty() &&
+                        lastNonEmptyAt > 0 &&
+                        (now - lastNonEmptyAt) < DETECTION_GRACE_PERIOD_MS
+
+                if (!withinGrace) {
+                    _detectedTargets.value = targets
+                    if (targets.isNotEmpty()) {
+                        lastNonEmptyAt = now
+                    } else {
+                        lastNonEmptyAt = 0L
+                    }
+                }
+                lastEmitAt = now
             }
         }
     }

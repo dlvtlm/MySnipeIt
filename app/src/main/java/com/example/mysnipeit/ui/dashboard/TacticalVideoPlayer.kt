@@ -458,10 +458,15 @@ private fun EnhancedTargetMarker(
                 }
             }
 
-            // Target info card anchored just below the bbox
+            // Target info card anchored just below the bbox.
+            // TopCenter + offset(y = boxHeight + 6.dp) puts the card's top
+            // exactly 6dp below the bbox bottom regardless of bbox size.
+            // (BottomCenter + offset(y = boxHeight + 6.dp) was incorrect — it
+            // shifts the card's *bottom* below the bbox bottom by that much,
+            // pushing tall-bbox cards off the bottom of the video.)
             Card(
                 modifier = Modifier
-                    .align(Alignment.BottomCenter)
+                    .align(Alignment.TopCenter)
                     .offset(y = boxHeight + 6.dp),
                 colors = CardDefaults.cardColors(
                     containerColor = Color.Black.copy(alpha = 0.85f)
