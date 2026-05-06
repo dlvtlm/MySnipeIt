@@ -2,6 +2,9 @@ package com.example.mysnipeit.ui.dashboard
 
 import android.content.Context
 import android.util.Log
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -156,42 +159,48 @@ fun TacticalVideoPlayer(
             // Target markers
             //SimulatedTargets(videoTime).forEach { target ->
             detectedTargets.forEach { target ->
-                val isLocked = lockedTargetId == target.id
-                val isSelected = target.id == selectedTargetId
+                // key(target.id) ensures Compose preserves the same composable
+                // instance (and its animation state) for the same target across
+                // recompositions. Without it, position-based identity would
+                // shuffle when the target list reorders, breaking interpolation.
+                key(target.id) {
+                    val isLocked = lockedTargetId == target.id
+                    val isSelected = target.id == selectedTargetId
 
-                EnhancedTargetMarker(
-                    target = target,
-                    isLocked = isLocked,
-                    isSelected = isSelected,
-                    onLockClick = {
-                        if (isLocked) {
-                            // Unlock current target
-                            lockedTargetId = null
-                            onTargetSelect("")  // Clear selection
-                            onTargetLockToggle(target.id, false)  // Send unlock command
-                        } else {
-                            // Unlock previous target if any
-                            lockedTargetId?.let { prevTargetId ->
-                                onTargetLockToggle(prevTargetId, false)  // Send unlock command for previous
-                            }
-                            // Lock this target
-                            lockedTargetId = target.id
-                            // Immediately select and show shooting solution
-                            onTargetSelect(target.id)
-                            onTargetLockToggle(target.id, true)  // Send lock command
-                        }
-                    },
-                    onTargetClick = {
-                        // Optional: Allow clicking locked target to select/deselect
-                        if (isLocked) {
-                            if (isSelected) {
-                                onTargetSelect("")  // Deselect
+                    EnhancedTargetMarker(
+                        target = target,
+                        isLocked = isLocked,
+                        isSelected = isSelected,
+                        onLockClick = {
+                            if (isLocked) {
+                                // Unlock current target
+                                lockedTargetId = null
+                                onTargetSelect("")  // Clear selection
+                                onTargetLockToggle(target.id, false)  // Send unlock command
                             } else {
-                                onTargetSelect(target.id)  // Select
+                                // Unlock previous target if any
+                                lockedTargetId?.let { prevTargetId ->
+                                    onTargetLockToggle(prevTargetId, false)  // Send unlock command for previous
+                                }
+                                // Lock this target
+                                lockedTargetId = target.id
+                                // Immediately select and show shooting solution
+                                onTargetSelect(target.id)
+                                onTargetLockToggle(target.id, true)  // Send lock command
+                            }
+                        },
+                        onTargetClick = {
+                            // Optional: Allow clicking locked target to select/deselect
+                            if (isLocked) {
+                                if (isSelected) {
+                                    onTargetSelect("")  // Deselect
+                                } else {
+                                    onTargetSelect(target.id)  // Select
+                                }
                             }
                         }
-                    }
-                )
+                    )
+                }
             }
 
             // Video status
@@ -365,10 +374,32 @@ private fun EnhancedTargetMarker(
         // Convert bbox pixel coordinates (relative to 1920x1080) to local Dp.
         // The parent BoxWithConstraints is the 16:9 video region (set up in the
         // outer aspect-ratio Box), so these ratios map 1:1 to rendered video pixels.
-        val xPos     = maxWidth  * (target.bbox.x.toFloat()      / VIDEO_WIDTH)
-        val yPos     = maxHeight * (target.bbox.y.toFloat()      / VIDEO_HEIGHT)
-        val boxWidth  = maxWidth  * (target.bbox.width.toFloat()  / VIDEO_WIDTH)
-        val boxHeight = maxHeight * (target.bbox.height.toFloat() / VIDEO_HEIGHT)
+        val targetX = maxWidth  * (target.bbox.x.toFloat()      / VIDEO_WIDTH)
+        val targetY = maxHeight * (target.bbox.y.toFloat()      / VIDEO_HEIGHT)
+        val targetW = maxWidth  * (target.bbox.width.toFloat()  / VIDEO_WIDTH)
+        val targetH = maxHeight * (target.bbox.height.toFloat() / VIDEO_HEIGHT)
+
+        // Smooth interpolation between detection updates (~167ms apart at 6Hz).
+        // Each new detection becomes the new "target" of the tween; Compose
+        // animates from the current rendered position/size to the new value over
+        // one detection interval. Net effect: the bbox glides to follow people
+        // and shrinks smoothly as they walk away, instead of snapping at 6Hz.
+        // Linear easing matches constant motion of moving targets.
+        val animSpec = tween<androidx.compose.ui.unit.Dp>(
+            durationMillis = 167,
+            easing = LinearEasing
+        )
+        val xPos      by animateDpAsState(targetValue = targetX, animationSpec = animSpec, label = "x")
+        val yPos      by animateDpAsState(targetValue = targetY, animationSpec = animSpec, label = "y")
+        val boxWidth  by animateDpAsState(targetValue = targetW, animationSpec = animSpec, label = "w")
+        val boxHeight by animateDpAsState(targetValue = targetH, animationSpec = animSpec, label = "h")
+
+        // Smart card placement: if there isn't enough room below the bbox for
+        // the info card, render it ABOVE the bbox instead. Prevents the card
+        // from being pushed off the bottom of the video for tall bboxes (e.g.
+        // a person filling most of the frame).
+        val cardHeight = 60.dp
+        val placeCardAbove = (targetY + targetH + cardHeight + 6.dp) > maxHeight
 
         Box(
             modifier = Modifier
@@ -458,23 +489,23 @@ private fun EnhancedTargetMarker(
                 }
             }
 
-            // Target info card anchored just below the bbox.
-            // TopCenter + offset(y = boxHeight + 6.dp) puts the card's top
-            // exactly 6dp below the bbox bottom regardless of bbox size.
-            // (BottomCenter + offset(y = boxHeight + 6.dp) was incorrect — it
-            // shifts the card's *bottom* below the bbox bottom by that much,
-            // pushing tall-bbox cards off the bottom of the video.)
+            // Minimal info card: just "T1 | HUMAN" + LOCK button. Placed below
+            // the bbox by default, or above it when the bbox is near the bottom
+            // of the video (so the card doesn't get pushed off-screen).
             Card(
                 modifier = Modifier
                     .align(Alignment.TopCenter)
-                    .offset(y = boxHeight + 6.dp),
+                    .offset(
+                        y = if (placeCardAbove) -(cardHeight + 6.dp)
+                            else boxHeight + 6.dp
+                    ),
                 colors = CardDefaults.cardColors(
                     containerColor = Color.Black.copy(alpha = 0.85f)
                 ),
                 shape = RoundedCornerShape(6.dp)
             ) {
                 Column(
-                    modifier = Modifier.padding(8.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     Text(
@@ -485,37 +516,19 @@ private fun EnhancedTargetMarker(
                         fontWeight = FontWeight.Bold
                     )
 
-                    Text(
-                        text = "Size: ${target.bbox.width}x${target.bbox.height}",
-                        color = MilitaryTextPrimary,
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
+                    Spacer(modifier = Modifier.height(4.dp))
 
-                    Text(
-                        text = "CONF: ${(target.confidence * 100).toInt()}%",
-                        color = if (target.confidence > 0.8f) Color(0xFF038C16) else Color(0xFFFFAA00),
-                        fontSize = 9.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
-
-                    Spacer(modifier = Modifier.height(6.dp))
-
-                    // Lock/Unlock button
                     Button(
                         onClick = onLockClick,
                         modifier = Modifier
-                            .height(28.dp)
-                            .widthIn(min = 80.dp),
+                            .height(26.dp)
+                            .widthIn(min = 70.dp),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isLocked) {
-                                Color(0xFFFFAA00)
-                            } else {
-                                Color(0xFF038C16)
-                            }
+                            containerColor = if (isLocked) Color(0xFFFFAA00)
+                                             else Color(0xFF038C16)
                         ),
                         shape = RoundedCornerShape(4.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp)
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
                     ) {
                         Text(
                             text = if (isLocked) "UNLOCK" else "LOCK",
@@ -523,18 +536,6 @@ private fun EnhancedTargetMarker(
                             fontWeight = FontWeight.Bold,
                             color = Color.Black,
                             fontFamily = FontFamily.Monospace
-                        )
-                    }
-
-                    //  Selection status
-                    if (isLocked) {
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(
-                            text = if (isSelected) "SELECTED" else "TAP TO SELECT",
-                            color = if (isSelected) Color(0xFFFF6B35) else Color(0xFF038C16).copy(alpha = 0.6f),
-                            fontSize = 8.sp,
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
                         )
                     }
                 }
