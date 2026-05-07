@@ -29,10 +29,21 @@ class RaspberryPiClient {
         // Detection pacing — smooth WS bursts to a max output rate
         private const val PACER_MIN_OUTPUT_INTERVAL_MS = 100L
 
-        // Detection grace period — keep showing the last non-empty detections
-        // briefly when the model misses 1-2 frames (ML is noisy; without this
-        // bboxes flicker on/off at the 0.5 confidence boundary).
-        private const val DETECTION_GRACE_PERIOD_MS = 500L
+        // App-side IoU tracker — gives each visible target a stable visual id
+        // that persists across frames even when the Pi reassigns its own ids
+        // (the Pi's Python script labels detections by confidence rank, so its
+        // "1" can swap between two people frame-to-frame).
+        // - IOU_MATCH_THRESHOLD: minimum overlap to consider an incoming bbox
+        //   the "same" target as an already-tracked one.
+        // - TRACKED_TARGET_TIMEOUT_MS: how long a tracked target is kept alive
+        //   without a fresh match (replaces the old grace-period mechanism).
+        private const val IOU_MATCH_THRESHOLD = 0.3f
+        private const val TRACKED_TARGET_TIMEOUT_MS = 600L
+
+        // EMA smoothing on matched bboxes. alpha = weight of the new sample.
+        // Higher = more responsive, less smoothing. 0.7 keeps a noticeable
+        // jitter reduction without making the bbox feel laggy.
+        private const val EMA_ALPHA = 0.7f
 
         // Stale detection auto-clear — drop bboxes if Pi stops sending them.
         // Tuned to 5s so brief silences between bursty Pi deliveries don't
@@ -96,6 +107,18 @@ class RaspberryPiClient {
     private val detectionQueue =
         Channel<Pair<List<DetectedTarget>, Long>>(Channel.UNLIMITED)
     private var detectionPacerJob: Job? = null
+
+    // --- App-side IoU tracker state ------------------------------------------
+    // Owned and mutated only by the pacer coroutine, so no external lock needed.
+    private data class TrackedTarget(
+        val visualId: String,        // stable id we assign (T1, T2, ...)
+        var bbox: BoundingBox,       // EMA-smoothed bbox
+        var confidence: Float,       // EMA-smoothed confidence
+        var targetType: String,
+        var lastSeenAt: Long
+    )
+    private val trackedTargets = LinkedHashMap<String, TrackedTarget>()
+    private var nextVisualIdCounter = 1
 
     // --- Staleness watchdog (C) ---------------------------------------------
     // If the Pi stops sending detections (e.g. detector died, video ended,
@@ -479,6 +502,11 @@ class RaspberryPiClient {
         while (detectionQueue.tryReceive().isSuccess) { /* drop */ }
         lastWsDetectionAt = 0L
 
+        // Reset the IoU tracker so the next session starts with no stale
+        // tracked targets and fresh visual ids (T1, T2, ...).
+        trackedTargets.clear()
+        nextVisualIdCounter = 1
+
         _systemStatus.value = _systemStatus.value.copy(
             connectionStatus = ConnectionState.DISCONNECTED
         )
@@ -492,16 +520,16 @@ class RaspberryPiClient {
     }
 
     // ------------------------------------------------------------------------
-    // (A) Detection pacer
+    // (A) Detection pacer + IoU tracker + EMA smoother
     // Reads from detectionQueue, drains to the latest available item (so a
     // burst of 130 messages becomes 1 emission of the freshest data), then
-    // throttles output to at most ~10Hz.
+    // runs the new detections through the tracker so visual identity is
+    // stable across Pi-side id swaps and ML jitter is smoothed via EMA.
     // ------------------------------------------------------------------------
     private fun startDetectionPacer() {
         detectionPacerJob?.cancel()
         detectionPacerJob = scope.launch {
             var lastEmitAt = 0L
-            var lastNonEmptyAt = 0L
             while (isActive) {
                 // Suspend until at least one detection arrives
                 var latest: Pair<List<DetectedTarget>, Long> = detectionQueue.receive()
@@ -528,27 +556,112 @@ class RaspberryPiClient {
                     delay(PACER_MIN_OUTPUT_INTERVAL_MS - sinceLast)
                 }
 
-                val now = System.currentTimeMillis()
-                val (targets, _) = latest
-
-                // Grace period: if the latest detection is empty but we recently
-                // had a non-empty result, hold the previous overlay rather than
-                // clearing it — smooths the on/off flicker caused by the ML
-                // model briefly losing confidence in an in-frame target.
-                val withinGrace = targets.isEmpty() &&
-                        lastNonEmptyAt > 0 &&
-                        (now - lastNonEmptyAt) < DETECTION_GRACE_PERIOD_MS
-
-                if (!withinGrace) {
-                    _detectedTargets.value = targets
-                    if (targets.isNotEmpty()) {
-                        lastNonEmptyAt = now
-                    } else {
-                        lastNonEmptyAt = 0L
-                    }
-                }
-                lastEmitAt = now
+                // Run the latest detection batch through the IoU tracker.
+                // Tracked targets persist for TRACKED_TARGET_TIMEOUT_MS after
+                // their last match, replacing the old per-pacer grace period.
+                val tracked = matchAndSmooth(latest.first)
+                _detectedTargets.value = tracked
+                lastEmitAt = System.currentTimeMillis()
             }
+        }
+    }
+
+    // ------------------------------------------------------------------------
+    // IoU tracker / EMA smoother helpers
+    // ------------------------------------------------------------------------
+
+    /** Intersection-over-union of two pixel-coord bboxes. */
+    private fun computeIoU(a: BoundingBox, b: BoundingBox): Float {
+        val x1 = maxOf(a.x, b.x)
+        val y1 = maxOf(a.y, b.y)
+        val x2 = minOf(a.x + a.width,  b.x + b.width)
+        val y2 = minOf(a.y + a.height, b.y + b.height)
+        val intersection = maxOf(0, x2 - x1) * maxOf(0, y2 - y1)
+        val union = a.width * a.height + b.width * b.height - intersection
+        return if (union > 0) intersection.toFloat() / union.toFloat() else 0f
+    }
+
+    private fun emaInt(old: Int, new: Int, alpha: Float): Int =
+        (alpha * new + (1f - alpha) * old).toInt()
+
+    private fun smoothBbox(old: BoundingBox, new: BoundingBox): BoundingBox =
+        BoundingBox(
+            x      = emaInt(old.x,      new.x,      EMA_ALPHA),
+            y      = emaInt(old.y,      new.y,      EMA_ALPHA),
+            width  = emaInt(old.width,  new.width,  EMA_ALPHA),
+            height = emaInt(old.height, new.height, EMA_ALPHA)
+        )
+
+    /**
+     * Match incoming raw detections against currently-tracked targets by IoU
+     * (greedy, highest-overlap first). Matched targets get EMA-smoothed
+     * positions and a refreshed lastSeenAt. Unmatched incoming detections
+     * become new tracked targets with a fresh visual id (T1, T2, ...).
+     * Tracked targets that haven't been matched within
+     * [TRACKED_TARGET_TIMEOUT_MS] are removed.
+     *
+     * Returned list = the current tracked-target snapshot, ready for UI.
+     */
+    private fun matchAndSmooth(incoming: List<DetectedTarget>): List<DetectedTarget> {
+        val now = System.currentTimeMillis()
+
+        // Build all candidate (trackedId, detectionIndex, IoU) pairs that meet
+        // the threshold, then assign greedily by descending IoU.
+        val candidates = mutableListOf<Triple<String, Int, Float>>()
+        for (track in trackedTargets.values) {
+            for ((idx, det) in incoming.withIndex()) {
+                val iou = computeIoU(track.bbox, det.bbox)
+                if (iou >= IOU_MATCH_THRESHOLD) {
+                    candidates.add(Triple(track.visualId, idx, iou))
+                }
+            }
+        }
+        candidates.sortByDescending { it.third }
+
+        val claimedTrackIds = HashSet<String>()
+        val claimedDetIdxs  = HashSet<Int>()
+
+        for ((trackId, detIdx, _) in candidates) {
+            if (trackId in claimedTrackIds || detIdx in claimedDetIdxs) continue
+            val track = trackedTargets[trackId] ?: continue
+            val det   = incoming[detIdx]
+
+            track.bbox       = smoothBbox(track.bbox, det.bbox)
+            track.confidence = EMA_ALPHA * det.confidence + (1f - EMA_ALPHA) * track.confidence
+            track.targetType = det.targetType
+            track.lastSeenAt = now
+
+            claimedTrackIds += trackId
+            claimedDetIdxs  += detIdx
+        }
+
+        // Unmatched incoming detections become new tracked targets.
+        for ((idx, det) in incoming.withIndex()) {
+            if (idx in claimedDetIdxs) continue
+            val visualId = "T${nextVisualIdCounter++}"
+            trackedTargets[visualId] = TrackedTarget(
+                visualId    = visualId,
+                bbox        = det.bbox,
+                confidence  = det.confidence,
+                targetType  = det.targetType,
+                lastSeenAt  = now
+            )
+        }
+
+        // Drop tracked targets that haven't been refreshed in the timeout window.
+        val toRemove = trackedTargets.filterValues {
+            now - it.lastSeenAt > TRACKED_TARGET_TIMEOUT_MS
+        }.keys
+        toRemove.forEach { trackedTargets.remove(it) }
+
+        return trackedTargets.values.map { track ->
+            DetectedTarget(
+                id          = track.visualId,
+                targetType  = track.targetType,
+                confidence  = track.confidence,
+                bbox        = track.bbox,
+                timestamp   = now
+            )
         }
     }
 

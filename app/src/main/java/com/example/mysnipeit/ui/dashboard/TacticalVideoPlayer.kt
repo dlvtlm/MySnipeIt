@@ -398,7 +398,7 @@ private fun EnhancedTargetMarker(
         // the info card, render it ABOVE the bbox instead. Prevents the card
         // from being pushed off the bottom of the video for tall bboxes (e.g.
         // a person filling most of the frame).
-        val cardHeight = 60.dp
+        val cardHeight = 72.dp
         val placeCardAbove = (targetY + targetH + cardHeight + 6.dp) > maxHeight
 
         Box(
@@ -514,6 +514,17 @@ private fun EnhancedTargetMarker(
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
                         fontWeight = FontWeight.Bold
+                    )
+
+                    Text(
+                        text = "CONF: ${(target.confidence * 100).toInt()}%",
+                        color = when {
+                            target.confidence > 0.8f -> Color(0xFF038C16)
+                            target.confidence > 0.6f -> Color(0xFFFFAA00)
+                            else                     -> Color(0xFFFF4444)
+                        },
+                        fontSize = 9.sp,
+                        fontFamily = FontFamily.Monospace
                     )
 
                     Spacer(modifier = Modifier.height(4.dp))
