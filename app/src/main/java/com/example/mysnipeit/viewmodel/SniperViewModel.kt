@@ -1,8 +1,10 @@
 package com.example.mysnipeit.viewmodel
 
-import androidx.lifecycle.ViewModel
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.mysnipeit.data.models.*
+import com.example.mysnipeit.data.network.WifiBinder
 import com.example.mysnipeit.data.repository.SniperRepository
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -10,7 +12,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import android.util.Log
 
-class SniperViewModel : ViewModel() {
+class SniperViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = SniperRepository()
 
@@ -53,7 +55,7 @@ class SniperViewModel : ViewModel() {
                 latitude = 31.513963,
                 status = DeviceStatus.ACTIVE,
                 batteryLevel = 95,
-                ipAddress = "192.168.7.9"
+                ipAddress = WifiBinder.FALLBACK_GATEWAY  // RPi5 AP gateway (10.42.1.1)
             ),
             Device(
                 id = "device_4",
@@ -108,11 +110,18 @@ class SniperViewModel : ViewModel() {
     }
 
     private fun connectToDevice(device: Device) {
-        Log.d("SniperViewModel", "connectToDevice called for IP: ${device.ipAddress}")
+        Log.d("SniperViewModel", "connectToDevice called for: ${device.name}")
         viewModelScope.launch {
             try {
-                // FIXED: Remove port parameter, only pass IP address
-                repository.connectToSystem(device.ipAddress)
+                val ctx = getApplication<Application>().applicationContext
+                // 1. Force traffic over WiFi (RPi AP has no internet → Android may otherwise prefer cellular)
+                WifiBinder.bindToWifi(ctx)
+                // 2. Auto-detect gateway IP; fall back to the device's stored IP
+                val detected = WifiBinder.getGatewayIp(ctx)
+                val targetIp = if (detected != WifiBinder.FALLBACK_GATEWAY) detected else device.ipAddress
+                Log.d("SniperViewModel", "Connecting to RPi at $targetIp (detected=$detected)")
+                // 3. Open WS/HTTP via existing path
+                repository.connectToSystem(targetIp)
                 Log.d("SniperViewModel", "Connection initiated successfully")
             } catch (e: Exception) {
                 Log.e("SniperViewModel", "Connection failed: ${e.message}")
@@ -143,6 +152,7 @@ class SniperViewModel : ViewModel() {
         _uiState.value = _uiState.value.copy(currentScreen = AppScreen.HOME)
         _selectedDevice.value = null
         repository.disconnectFromSystem()
+        WifiBinder.release(getApplication<Application>().applicationContext)
     }
 
     fun connectToSystem() {
@@ -153,6 +163,13 @@ class SniperViewModel : ViewModel() {
 
     fun disconnectFromSystem() {
         repository.disconnectFromSystem()
+        WifiBinder.release(getApplication<Application>().applicationContext)
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        // Safety net: release the WiFi binding if the VM dies while still bound.
+        WifiBinder.release(getApplication<Application>().applicationContext)
     }
 
     // Command methods

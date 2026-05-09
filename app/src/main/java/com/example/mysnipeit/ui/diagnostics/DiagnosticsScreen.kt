@@ -99,7 +99,7 @@ fun DiagnosticsScreen(
                         OutlinedTextField(
                             value = diagnosticsState.ipAddress,
                             onValueChange = { viewModel.updateIpAddress(it) },
-                            placeholder = { Text("192.168.1.100") },
+                            placeholder = { Text("10.42.1.1") },
                             modifier = Modifier.fillMaxWidth(),
                             colors = OutlinedTextFieldDefaults.colors(
                                 focusedTextColor = MilitaryTextPrimary,
@@ -184,7 +184,7 @@ fun DiagnosticsScreen(
 
                 // WebSocket Port Test
                 TestResultCard(
-                    title = "WEBSOCKET PORT (8080)",
+                    title = "WEBSOCKET PORT (8555)",
                     status = diagnosticsState.websocketStatus,
                     message = diagnosticsState.websocketMessage
                 )
@@ -373,15 +373,15 @@ class DiagnosticsViewModel : ViewModel() {
         // Test 2-4: Port scans (only if ping succeeds)
         if (pingResult) {
             val ports = mapOf(
-                8080 to "websocketStatus",
+                8555 to "websocketStatus",
                 8000 to "httpStatus",
                 8554 to "videoStatus"
             )
 
             val portResults = networkTester.scanPorts(ip, ports.keys.toList())
 
-            // WebSocket (8080)
-            val wsResult = portResults[8080] ?: false
+            // WebSocket (8555)
+            val wsResult = portResults[8555] ?: false
             _diagnosticsState.value = _diagnosticsState.value.copy(
                 websocketStatus = if (wsResult) TestStatus.SUCCESS else TestStatus.FAILED,
                 websocketMessage = if (wsResult) "Port is open and ready" else "Port is closed or blocked"
@@ -402,7 +402,7 @@ class DiagnosticsViewModel : ViewModel() {
             )
 
             // Add recommendations based on results
-            if (!wsResult) recommendations.add("Start WebSocket server on Raspberry Pi (port 8080)")
+            if (!wsResult) recommendations.add("Start WebSocket server on Raspberry Pi (port 8555)")
             if (!httpResult) recommendations.add("Start HTTP API server on Raspberry Pi (port 8000)")
             if (!videoResult) recommendations.add("Start video streaming server on Raspberry Pi (port 8554)")
 
@@ -419,7 +419,7 @@ class DiagnosticsViewModel : ViewModel() {
 }
 
 data class DiagnosticsState(
-    val ipAddress: String = "192.168.1.100",
+    val ipAddress: String = "10.42.1.1",
     val isRunning: Boolean = false,
     val pingStatus: TestStatus = TestStatus.PENDING,
     val pingMessage: String = "",
