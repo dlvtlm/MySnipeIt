@@ -110,12 +110,10 @@ fun SniperApp(viewModel: SniperViewModel) {
             MapScreen(
                 devices = availableDevices,
                 userLocation = userLocation,
-                onDeviceSelected = { device ->
-                    viewModel.selectDevice(device)
-                },
-                onBackClick = {
-                    viewModel.navigateToHome()
-                }
+                onDeviceSelected = { device -> viewModel.selectDevice(device) },
+                onBackClick = { viewModel.navigateToHome() },
+                isDarkTheme = darkTheme,
+                onToggleTheme = { viewModel.toggleTheme() },
             )
         }
 

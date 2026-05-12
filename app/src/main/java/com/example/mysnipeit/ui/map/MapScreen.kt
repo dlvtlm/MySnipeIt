@@ -1,275 +1,344 @@
 package com.example.mysnipeit.ui.map
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
 import com.example.mysnipeit.data.models.Device
 import com.example.mysnipeit.data.models.DeviceStatus
-import com.example.mysnipeit.ui.theme.*
+import com.example.mysnipeit.ui.theme.Chip
+import com.example.mysnipeit.ui.theme.ChipTone
+import com.example.mysnipeit.ui.theme.JetBrainsMono
+import com.example.mysnipeit.ui.theme.Lbl
+import com.example.mysnipeit.ui.theme.LocalIsDarkTheme
+import com.example.mysnipeit.ui.theme.LocalTactical
+import com.example.mysnipeit.ui.theme.ThemeToggle
+import com.example.mysnipeit.ui.theme.TopBar
+import com.example.mysnipeit.R
+import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
 import com.google.android.gms.maps.model.LatLng
-import com.google.maps.android.compose.*
-import kotlin.random.Random
+import com.google.android.gms.maps.model.MapStyleOptions
+import com.google.maps.android.compose.GoogleMap
+import com.google.maps.android.compose.MapProperties
+import com.google.maps.android.compose.MapType
+import com.google.maps.android.compose.MapUiSettings
+import com.google.maps.android.compose.Marker
+import com.google.maps.android.compose.MarkerState
+import com.google.maps.android.compose.rememberCameraPositionState
 
+/**
+ * Map screen — design's "Sectors + intel pane" variant (Option B from
+ * the chat), adapted: we keep Google Maps as the underlying terrain
+ * surface (user's pick), apply a tactical dark style on top, and add
+ * the design's right-hand 320dp intel pane.
+ *
+ * Markers use Google Maps' BitmapDescriptor in tactical colors — green
+ * for ACTIVE, red for everything else — and the selected node fills the
+ * intel pane with details + CONNECT button.
+ */
 @Composable
 fun MapScreen(
     devices: List<Device>,
     userLocation: LatLng,
     onDeviceSelected: (Device) -> Unit,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    isDarkTheme: Boolean = true,
+    onToggleTheme: () -> Unit = {},
 ) {
-    var selectedDevice by remember { mutableStateOf<Device?>(null) }
+    val t = LocalTactical.current
+    val isDark = LocalIsDarkTheme.current
+    val context = LocalContext.current
+    var selected by remember(devices) { mutableStateOf<Device?>(devices.firstOrNull { it.status == DeviceStatus.ACTIVE }) }
 
-    val cameraPositionState = rememberCameraPositionState {
+    val cameraState = rememberCameraPositionState {
         position = CameraPosition.fromLatLngZoom(userLocation, 14f)
     }
 
-    Box(
+    // Load the tactical dark map style. Only applied in dark mode; light
+    // mode uses Google's default styling (which already reads well against
+    // our khaki light background).
+    val mapStyle = remember(isDark) {
+        if (isDark) {
+            runCatching {
+                MapStyleOptions.loadRawResourceStyle(context, R.raw.maps_style_tactical_dark)
+            }.getOrNull()
+        } else null
+    }
+
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MilitaryDarkBackground)
+            .background(t.base),
     ) {
-        // Google Map
-        GoogleMap(
-            modifier = Modifier.fillMaxSize(),
-            cameraPositionState = cameraPositionState,
-            properties = MapProperties(
-                mapType = MapType.SATELLITE,
-                isMyLocationEnabled = false
-            ),
-            uiSettings = MapUiSettings(
-                zoomControlsEnabled = false,
-                myLocationButtonEnabled = false
-            )
-        ) {
-            // User location marker
-            Marker(
-                state = MarkerState(position = userLocation),
-                title = "Your Location",
-                icon = com.google.android.gms.maps.model.BitmapDescriptorFactory.defaultMarker(
-                    com.google.android.gms.maps.model.BitmapDescriptorFactory.HUE_BLUE
-                )
-            )
-
-            // Device markers
-            devices.forEach { device ->
-                val deviceLocation = LatLng(device.latitude, device.longitude)
-                val markerColor = when (device.status) {
-                    DeviceStatus.ACTIVE -> com.google.android.gms.maps.model.BitmapDescriptorFactory.HUE_GREEN
-                    else -> com.google.android.gms.maps.model.BitmapDescriptorFactory.HUE_RED
-                }
-
-                Marker(
-                    state = MarkerState(position = deviceLocation),
-                    title = device.name,
-                    snippet = device.status.name,
-                    icon = com.google.android.gms.maps.model.BitmapDescriptorFactory.defaultMarker(markerColor),
-                    onClick = {
-                        selectedDevice = device
-                        true
-                    }
-                )
-            }
+        TopBar(device = "TACTICAL MAP") {
+            ThemeToggle(isDark = isDarkTheme, onToggle = onToggleTheme)
         }
-
-        // Back button overlay
-        Button(
-            onClick = onBackClick,
-            modifier = Modifier
-                .align(Alignment.TopStart)
-                .padding(24.dp)
-                .size(56.dp),
-            colors = ButtonDefaults.buttonColors(
-                containerColor = MilitaryCardBackground.copy(alpha = 0.95f)
-            ),
-            contentPadding = PaddingValues(0.dp)
-        ) {
-            Text(
-                text = "←",
-                fontSize = 24.sp,
-                fontWeight = FontWeight.Bold,
-                color = MilitaryTextPrimary
-            )
-        }
-
-        // Map title overlay
-        Card(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .padding(24.dp),
-            colors = CardDefaults.cardColors(
-                containerColor = MilitaryCardBackground.copy(alpha = 0.95f)
-            )
-        ) {
-            Text(
-                text = "MAP VIEW - ${devices.size} DEVICES",
-                fontSize = 16.sp,
-                fontWeight = FontWeight.Bold,
-                color = MilitaryTextPrimary,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(16.dp)
-            )
-        }
-
-        // Device details dialog
-        selectedDevice?.let { device ->
-            DeviceMapDialog(
-                device = device,
-                onDismiss = { selectedDevice = null },
-                onConnect = {
-                    onDeviceSelected(device)
-                    selectedDevice = null
-                }
-            )
-        }
-    }
-}
-
-@Composable
-private fun DeviceMapDialog(
-    device: Device,
-    onDismiss: () -> Unit,
-    onConnect: () -> Unit
-) {
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = MilitaryCardBackground
-            ),
-            shape = RoundedCornerShape(12.dp),
-            border = androidx.compose.foundation.BorderStroke(2.dp, MilitaryAccentGreen)
-        ) {
-            Column(
+        Row(modifier = Modifier.fillMaxSize()) {
+            // Left — Google Maps with the tactical dark style
+            Box(
                 modifier = Modifier
-                    .padding(24.dp)
-                    .widthIn(min = 300.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
+                    .weight(1f)
+                    .fillMaxHeight(),
             ) {
-                Text(
-                    text = device.name,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MilitaryTextPrimary,
-                    fontFamily = FontFamily.Monospace
-                )
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Status badge
-                val statusColor = when (device.status) {
-                    DeviceStatus.ACTIVE -> StatusConnected
-                    DeviceStatus.SCANNING -> StatusConnecting
-                    DeviceStatus.INACTIVE -> StatusDisconnected
-                    DeviceStatus.ERROR -> StatusError
-                }
-
-                Surface(
-                    color = statusColor.copy(alpha = 0.2f),
-                    shape = RoundedCornerShape(16.dp),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, statusColor)
+                GoogleMap(
+                    modifier = Modifier.fillMaxSize(),
+                    cameraPositionState = cameraState,
+                    properties = MapProperties(
+                        // The "normal" type works much better with custom JSON
+                        // styling than SATELLITE — satellite imagery would
+                        // override the tactical colors.
+                        mapType = MapType.NORMAL,
+                        mapStyleOptions = mapStyle,
+                        isMyLocationEnabled = false,
+                    ),
+                    uiSettings = MapUiSettings(
+                        zoomControlsEnabled = false,
+                        myLocationButtonEnabled = false,
+                        compassEnabled = false,
+                        mapToolbarEnabled = false,
+                    ),
                 ) {
-                    Text(
-                        text = device.status.name,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = statusColor,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                    Marker(
+                        state = MarkerState(position = userLocation),
+                        title = "Your Location",
+                        // Use a low-saturation hue. HUE_AZURE reads as a muted
+                        // teal under the tactical style — far less attention-
+                        // grabbing than a saturated blue.
+                        icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE),
                     )
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Device details
-                DeviceDetailRow("Location", device.location)
-                DeviceDetailRow("Distance", calculateDistance(device) + " km")
-                DeviceDetailRow("Battery", "${device.batteryLevel}%")
-                DeviceDetailRow("IP", device.ipAddress)
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Action buttons
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    OutlinedButton(
-                        onClick = onDismiss,
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MilitaryTextPrimary
-                        ),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MilitaryBorderColor)
-                    ) {
-                        Text(
-                            text = "CLOSE",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Button(
-                        onClick = onConnect,
-                        enabled = device.status == DeviceStatus.ACTIVE,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (device.status == DeviceStatus.ACTIVE) {
-                                MilitaryAccentGreen  // Green for active
-                            } else {
-                                Color.Gray  // Gray for inactive
+                    devices.forEach { device ->
+                        val position = LatLng(device.latitude, device.longitude)
+                        val hue = when (device.status) {
+                            DeviceStatus.ACTIVE -> BitmapDescriptorFactory.HUE_GREEN
+                            DeviceStatus.SCANNING -> BitmapDescriptorFactory.HUE_YELLOW
+                            DeviceStatus.INACTIVE,
+                            DeviceStatus.ERROR -> BitmapDescriptorFactory.HUE_RED
+                        }
+                        Marker(
+                            state = MarkerState(position = position),
+                            title = device.name,
+                            snippet = device.status.name,
+                            icon = BitmapDescriptorFactory.defaultMarker(hue),
+                            onClick = {
+                                selected = device
+                                true
                             },
-                            disabledContainerColor = Color.Gray.copy(alpha = 0.5f)
-                        )
-                    ) {
-                        Text(
-                            text = if (device.status == DeviceStatus.ACTIVE) {
-                                "CONNECT"
-                            } else {
-                                "DEVICE OFFLINE"
-                            },
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Black
                         )
                     }
                 }
+                // Tactical chrome overlays (do NOT touch the map's input)
+                MgrsBadge()
+                BackButton(onBackClick = onBackClick)
             }
+
+            // Right — 320dp intel pane (always present, with placeholder copy
+            // when nothing is selected)
+            IntelPane(
+                device = selected,
+                onConnect = { selected?.let(onDeviceSelected) },
+            )
         }
     }
 }
 
+// ----------------------------------------------------------------------------
+// Map overlays
+// ----------------------------------------------------------------------------
 @Composable
-private fun DeviceDetailRow(label: String, value: String) {
-    Row(
+private fun MgrsBadge() {
+    val t = LocalTactical.current
+    Column(
         modifier = Modifier
-            .fillMaxWidth()
-            .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+            .padding(12.dp)
+            .background(t.panel.copy(alpha = 0.92f))
+            .border(1.dp, t.line)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
     ) {
         Text(
-            text = "$label:",
-            fontSize = 14.sp,
-            color = MilitaryTextSecondary,
-            fontFamily = FontFamily.Monospace
+            text = "TACTICAL MAP · GRID 33S",
+            color = t.ink,
+            fontSize = 10.sp,
+            letterSpacing = 0.18.em,
+            fontFamily = JetBrainsMono,
         )
+        Spacer(Modifier.height(2.dp))
+        Text(
+            text = "ZOOM 14 · UTM",
+            color = t.inkDim,
+            fontSize = 9.sp,
+            letterSpacing = 0.18.em,
+            fontFamily = JetBrainsMono,
+        )
+    }
+}
+
+@Composable
+private fun BoxScope.BackButton(onBackClick: () -> Unit) {
+    val t = LocalTactical.current
+    Box(
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(12.dp)
+            .background(t.panel.copy(alpha = 0.92f))
+            .border(1.dp, t.lineHi)
+            .clickable(onClick = onBackClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    ) {
+        Text(
+            text = "← BACK",
+            color = t.ink,
+            fontSize = 10.sp,
+            letterSpacing = 0.18.em,
+            fontFamily = JetBrainsMono,
+        )
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Intel pane — right side
+// ----------------------------------------------------------------------------
+@Composable
+private fun IntelPane(
+    device: Device?,
+    onConnect: () -> Unit,
+) {
+    val t = LocalTactical.current
+    Column(
+        modifier = Modifier
+            .width(320.dp)
+            .fillMaxHeight()
+            .background(t.panel)
+            .border(1.dp, t.line)
+            .padding(horizontal = 22.dp, vertical = 20.dp)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        if (device == null) {
+            Lbl(text = "NO NODE SELECTED")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = "Tap a marker on the map to view node details.",
+                color = t.inkDim,
+                fontSize = 11.sp,
+                fontFamily = JetBrainsMono,
+            )
+            return@Column
+        }
+
+        Lbl(text = "SELECTED · ${device.id.uppercase()}")
+        Spacer(Modifier.height(6.dp))
+        Text(
+            text = device.name.uppercase(),
+            color = t.ink,
+            fontSize = 22.sp,
+            letterSpacing = 0.08.em,
+            fontFamily = JetBrainsMono,
+        )
+        Spacer(Modifier.height(8.dp))
+        val (statusText, tone) = when (device.status) {
+            DeviceStatus.ACTIVE -> "ACTIVE" to ChipTone.On
+            DeviceStatus.INACTIVE -> "OFFLINE" to ChipTone.Danger
+            DeviceStatus.SCANNING -> "STANDBY" to ChipTone.Warn
+            DeviceStatus.ERROR -> "ERROR" to ChipTone.Danger
+        }
+        Chip(text = statusText, tone = tone)
+
+        Spacer(Modifier.height(22.dp))
+        DividerLine()
+        Spacer(Modifier.height(18.dp))
+
+        // Two-column grid of the data we actually have on each Device
+        IntelGrid(device = device)
+
+        Spacer(Modifier.height(22.dp))
+        DividerLine()
+        Spacer(Modifier.height(18.dp))
+
+        Lbl(text = "RECENT DETECTIONS")
+        Spacer(Modifier.height(8.dp))
+        Text(
+            text = "—",
+            color = t.inkDim,
+            fontSize = 11.sp,
+            fontFamily = JetBrainsMono,
+        )
+
+        Spacer(Modifier.weight(1f, fill = false))
+        Spacer(Modifier.height(18.dp))
+        // CONNECT button (only enabled for ACTIVE nodes)
+        val enabled = device.status == DeviceStatus.ACTIVE
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(if (enabled) t.panelHi else Color.Transparent)
+                .border(1.dp, if (enabled) t.lineHi else t.line)
+                .clickable(enabled = enabled, onClick = onConnect)
+                .padding(vertical = 14.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = if (enabled) "CONNECT →" else "NODE OFFLINE",
+                color = if (enabled) t.ink else t.inkMute,
+                fontSize = 11.sp,
+                letterSpacing = 0.24.em,
+                fontFamily = JetBrainsMono,
+            )
+        }
+    }
+}
+
+@Composable
+private fun IntelGrid(device: Device) {
+    Column(verticalArrangement = Arrangement.spacedBy(14.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+            IntelCell(label = "SECTOR", value = device.location.uppercase(), modifier = Modifier.weight(1f))
+            IntelCell(label = "STATUS", value = device.status.name, modifier = Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+            IntelCell(label = "BATTERY", value = "${device.batteryLevel}%", modifier = Modifier.weight(1f))
+            IntelCell(label = "IP", value = device.ipAddress, modifier = Modifier.weight(1f))
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(18.dp)) {
+            IntelCell(label = "LATITUDE",  value = String.format("%.5f", device.latitude),  modifier = Modifier.weight(1f))
+            IntelCell(label = "LONGITUDE", value = String.format("%.5f", device.longitude), modifier = Modifier.weight(1f))
+        }
+    }
+}
+
+@Composable
+private fun IntelCell(label: String, value: String, modifier: Modifier = Modifier) {
+    val t = LocalTactical.current
+    Column(modifier = modifier) {
+        Lbl(text = label)
+        Spacer(Modifier.height(4.dp))
         Text(
             text = value,
+            color = t.ink,
             fontSize = 14.sp,
-            color = MilitaryTextPrimary,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold
+            letterSpacing = 0.06.em,
+            fontFamily = JetBrainsMono,
         )
     }
 }
 
-private fun calculateDistance(device: Device): String {
-    // Simple mock distance calculation
-    return String.format("%.2f", Random.nextDouble(0.5, 5.0))
+@Composable
+private fun DividerLine() {
+    val t = LocalTactical.current
+    Box(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(1.dp)
+            .background(t.line)
+    )
 }
