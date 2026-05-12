@@ -76,6 +76,7 @@ fun SniperApp(viewModel: SniperViewModel) {
     val selectedTargetId = uiState.selectedTargetId
     val streamReady by viewModel.streamReady.collectAsState()
     val rtspStreamUrl by viewModel.rtspStreamUrl.collectAsState()
+    val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
 
 
     // User location (mock location for now - can be replaced with real GPS later)
@@ -87,12 +88,11 @@ fun SniperApp(viewModel: SniperViewModel) {
     when (uiState.currentScreen) {
         AppScreen.HOME -> {
             HomeScreen(
-                onDeviceListClick = {
-                    viewModel.navigateToDeviceList()
-                },
-                onMapClick = {
-                    viewModel.navigateToMap()
-                }
+                onDeviceListClick = { viewModel.navigateToDeviceList() },
+                onMapClick = { viewModel.navigateToMap() },
+                onDiagnosticsClick = { viewModel.navigateToDiagnostics() },
+                isDarkTheme = darkTheme,
+                onToggleTheme = { viewModel.toggleTheme() },
             )
         }
 
