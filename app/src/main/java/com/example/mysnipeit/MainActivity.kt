@@ -157,7 +157,9 @@ fun SniperApp(viewModel: SniperViewModel) {
 
         AppScreen.DIAGNOSTICS -> {
             DiagnosticsScreen(
-                onBackClick = { viewModel.navigateToHome() }
+                onBackClick = { viewModel.navigateToHome() },
+                isDarkTheme = darkTheme,
+                onToggleTheme = { viewModel.toggleTheme() },
             )
         }
     }
