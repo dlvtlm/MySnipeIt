@@ -99,12 +99,10 @@ fun SniperApp(viewModel: SniperViewModel) {
         AppScreen.DEVICE_SELECTION -> {
             DeviceSelectionScreen(
                 devices = availableDevices,
-                onDeviceSelected = { device ->
-                    viewModel.selectDevice(device)
-                },
-                onBackClick = {
-                    viewModel.navigateToHome()
-                }
+                onDeviceSelected = { device -> viewModel.selectDevice(device) },
+                onBackClick = { viewModel.navigateToHome() },
+                isDarkTheme = darkTheme,
+                onToggleTheme = { viewModel.toggleTheme() },
             )
         }
 
