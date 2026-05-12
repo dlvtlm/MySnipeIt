@@ -348,11 +348,14 @@ private fun EnhancedTargetMarker(
     onLockClick: () -> Unit,
     onTargetClick: () -> Unit
 ) {
+    // Tactical palette — see ui/theme/Color.kt.
+    // Bone for tracked targets, copper for the selected/locked target.
+    // No saturated greens or cyans (the redesign brief).
+    val palette = LocalTactical.current
     val markerColor = when {
-        isSelected -> Color(0xFFFF6B35)     // Orange for selected
-        isLocked -> Color(0xFFFFAA00)       // Amber for locked
-        target.targetType == "HUMAN" -> Color(0xFF038C16)  // Green
-        else -> Color(0xFF00D9FF)           // Cyan
+        isSelected -> palette.accent     // copper — selected (with shooting solution)
+        isLocked   -> palette.accent     // copper — locked
+        else       -> palette.ink        // bone for everything else
     }
 
     var pulseAlpha by remember { mutableStateOf(1f) }

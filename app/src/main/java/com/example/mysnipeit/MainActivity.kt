@@ -127,26 +127,23 @@ fun SniperApp(viewModel: SniperViewModel) {
                 streamReady = streamReady,
                 rtspStreamUrl = rtspStreamUrl,
                 onTargetSelect = { targetId ->
-                    if (targetId.isEmpty()) {
-                        viewModel.deselectTarget()
-                    } else {
-                        viewModel.selectTarget(targetId)
-                    }
+                    if (targetId.isEmpty()) viewModel.deselectTarget()
+                    else viewModel.selectTarget(targetId)
                 },
                 onTargetLockToggle = { targetId, isLocking ->
-                    if (isLocking) {
-                        viewModel.lockTarget(targetId)
-                    } else {
-                        viewModel.unlockTarget(targetId)
-                    }
+                    if (isLocking) viewModel.lockTarget(targetId)
+                    else viewModel.unlockTarget(targetId)
                 },
                 onConnectClick = { viewModel.connectToSystem() },
                 onDisconnectClick = { viewModel.disconnectFromSystem() },
                 onBackClick = { viewModel.goBackFromDashboard() },
-                onMenuClick = { showMenu = true }
+                onMenuClick = { showMenu = true },
+                isDarkTheme = darkTheme,
+                onToggleTheme = { viewModel.toggleTheme() },
             )
 
-            // Menu dropdown
+            // Menu dropdown — same as before; gives the dashboard a way to
+            // reach Diagnostics without leaving the operator surface.
             if (showMenu) {
                 DashboardMenu(
                     onDismiss = { showMenu = false },
