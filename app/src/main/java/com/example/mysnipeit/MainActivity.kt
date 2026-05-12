@@ -33,7 +33,8 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableImmersiveMode()
         setContent {
-            MySniperItTheme {
+            val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
+            MySniperItTheme(darkTheme = darkTheme) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background

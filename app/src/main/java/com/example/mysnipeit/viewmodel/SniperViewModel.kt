@@ -24,6 +24,17 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
 
     val uiState: StateFlow<SniperUiState> = _uiState.asStateFlow()
 
+    // --- Theme mode (dark / light) -----------------------------------------
+    // Persisted to SharedPreferences so the choice survives app restarts.
+    private val prefs = application.getSharedPreferences("snipeit", android.content.Context.MODE_PRIVATE)
+    private val _darkTheme = MutableStateFlow(prefs.getBoolean("dark_theme", true))
+    val darkTheme: StateFlow<Boolean> = _darkTheme.asStateFlow()
+    fun toggleTheme() {
+        val next = !_darkTheme.value
+        _darkTheme.value = next
+        prefs.edit().putBoolean("dark_theme", next).apply()
+    }
+
     // All 4 devices
     private val _availableDevices = MutableStateFlow(
         listOf(
