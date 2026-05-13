@@ -43,6 +43,8 @@ fun DeviceSelectionScreen(
     devices: List<Device>,
     onDeviceSelected: (Device) -> Unit,
     onBackClick: () -> Unit,
+    onMapClick: () -> Unit = {},
+    onDiagnosticsClick: () -> Unit = {},
     isDarkTheme: Boolean = true,
     onToggleTheme: () -> Unit = {},
 ) {
@@ -55,11 +57,18 @@ fun DeviceSelectionScreen(
             .fillMaxSize()
             .background(t.base),
     ) {
-        TopBar(device = "UNIT REGISTRY · ${devices.size}") {
+        TopBar(
+            device = "UNIT REGISTRY · ${devices.size}",
+            onBackClick = onBackClick,
+        ) {
             ThemeToggle(isDark = isDarkTheme, onToggle = onToggleTheme)
         }
         Row(modifier = Modifier.fillMaxSize()) {
-            SidebarNav(active = "DEVICES", count = devices.size, onBackClick = onBackClick)
+            SidebarNav(
+                count = devices.size,
+                onMapClick = onMapClick,
+                onDiagnosticsClick = onDiagnosticsClick,
+            )
             DeviceListPane(
                 devices = devices,
                 onPick = { device ->
@@ -90,12 +99,18 @@ fun DeviceSelectionScreen(
 
 // ----------------------------------------------------------------------------
 // Sidebar nav (left rail)
+//
+// LOGS removed entirely — the app doesn't have a log screen, so showing the
+// label was misleading. The other items are wired to real navigation:
+//   DEVICES → no-op (we're already here)
+//   MAP     → onMapClick
+//   DIAG    → onDiagnosticsClick
 // ----------------------------------------------------------------------------
 @Composable
 private fun SidebarNav(
-    active: String,
     count: Int,
-    onBackClick: () -> Unit,
+    onMapClick: () -> Unit,
+    onDiagnosticsClick: () -> Unit,
 ) {
     val t = LocalTactical.current
     Column(
@@ -113,51 +128,53 @@ private fun SidebarNav(
             }
             .padding(vertical = 20.dp),
     ) {
-        listOf(
-            "DEVICES" to count.toString(),
-            "MAP" to "",
-            "LOGS" to "",
-            "DIAG" to "",
-        ).forEach { (label, badge) ->
-            val isActive = label == active
-            val onClick: () -> Unit = when (label) {
-                "DEVICES" -> ({}) // already here
-                "MAP", "LOGS", "DIAG" -> ({ onBackClick() })
-                else -> ({})
+        SidebarNavItem(label = "DEVICES", badge = count.toString(), active = true, onClick = null)
+        SidebarNavItem(label = "MAP",     badge = "", active = false, onClick = onMapClick)
+        SidebarNavItem(label = "DIAG",    badge = "", active = false, onClick = onDiagnosticsClick)
+    }
+}
+
+@Composable
+private fun SidebarNavItem(
+    label: String,
+    badge: String,
+    active: Boolean,
+    onClick: (() -> Unit)?,
+) {
+    val t = LocalTactical.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (active) t.panelHi else Color.Transparent)
+            .drawBehind {
+                if (active) {
+                    drawLine(
+                        color = t.accent,
+                        start = Offset(0f, 0f),
+                        end = Offset(0f, size.height),
+                        strokeWidth = 2.dp.toPx(),
+                    )
+                }
             }
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(if (isActive) t.panelHi else Color.Transparent)
-                    .drawBehind {
-                        if (isActive) {
-                            drawLine(
-                                color = t.accent,
-                                start = Offset(0f, 0f),
-                                end = Offset(0f, size.height),
-                                strokeWidth = 2.dp.toPx(),
-                            )
-                        }
-                    }
-                    .clickable(onClick = onClick)
-                    .padding(horizontal = 22.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Text(
-                    text = label,
-                    color = if (isActive) t.ink else t.inkDim,
-                    fontSize = 11.sp,
-                    letterSpacing = 0.18.em,
-                    fontFamily = JetBrainsMono,
-                )
-                Text(
-                    text = badge,
-                    color = t.inkMute,
-                    fontSize = 9.sp,
-                    fontFamily = JetBrainsMono,
-                )
-            }
+            .let { m -> if (onClick != null) m.clickable(onClick = onClick) else m }
+            .padding(horizontal = 22.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = label,
+            color = if (active) t.ink else t.inkDim,
+            fontSize = 11.sp,
+            letterSpacing = 0.18.em,
+            fontFamily = JetBrainsMono,
+        )
+        if (badge.isNotEmpty()) {
+            Text(
+                text = badge,
+                color = t.inkMute,
+                fontSize = 9.sp,
+                fontFamily = JetBrainsMono,
+            )
         }
     }
 }

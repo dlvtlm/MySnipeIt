@@ -52,11 +52,14 @@ fun DiagnosticsScreen(
             .fillMaxSize()
             .background(t.base),
     ) {
-        TopBar(device = "DIAGNOSTICS") {
+        TopBar(
+            device = "DIAGNOSTICS",
+            onBackClick = onBackClick,
+        ) {
             ThemeToggle(isDark = isDarkTheme, onToggle = onToggleTheme)
         }
         Row(modifier = Modifier.fillMaxSize()) {
-            DiagSidebar(onBackClick = onBackClick)
+            DiagSidebar()
             DiagMainPane(
                 state = state,
                 onIpChange = viewModel::updateIpAddress,
@@ -69,9 +72,14 @@ fun DiagnosticsScreen(
 
 // ----------------------------------------------------------------------------
 // Sidebar
+//
+// LOGS removed (the app has no log screen). MOCK MODE and TELEMETRY are kept
+// as placeholders for future features but rendered as DISABLED — they don't
+// pretend to be clickable. The BACK button used to live at the bottom of
+// this sidebar; it now lives in the TopBar for cross-screen consistency.
 // ----------------------------------------------------------------------------
 @Composable
-private fun DiagSidebar(onBackClick: () -> Unit) {
+private fun DiagSidebar() {
     val t = LocalTactical.current
     Column(
         modifier = Modifier
@@ -90,36 +98,16 @@ private fun DiagSidebar(onBackClick: () -> Unit) {
     ) {
         Lbl(text = "DIAGNOSTICS")
         Spacer(Modifier.height(16.dp))
-        DiagNavItem(label = "CONNECTIVITY", active = true)
+        DiagNavItem(label = "CONNECTIVITY", active = true,  disabled = false)
         Spacer(Modifier.height(4.dp))
-        DiagNavItem(label = "MOCK MODE",   active = false)
+        DiagNavItem(label = "MOCK MODE",    active = false, disabled = true)
         Spacer(Modifier.height(4.dp))
-        DiagNavItem(label = "LOGS",        active = false)
-        Spacer(Modifier.height(4.dp))
-        DiagNavItem(label = "TELEMETRY",   active = false)
-
-        Spacer(Modifier.weight(1f))
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .border(1.dp, t.line)
-                .clickable(onClick = onBackClick)
-                .padding(vertical = 10.dp),
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = "← BACK",
-                color = t.ink,
-                fontSize = 10.sp,
-                letterSpacing = 0.24.em,
-                fontFamily = JetBrainsMono,
-            )
-        }
+        DiagNavItem(label = "TELEMETRY",    active = false, disabled = true)
     }
 }
 
 @Composable
-private fun DiagNavItem(label: String, active: Boolean) {
+private fun DiagNavItem(label: String, active: Boolean, disabled: Boolean) {
     val t = LocalTactical.current
     Row(
         modifier = Modifier
@@ -137,14 +125,28 @@ private fun DiagNavItem(label: String, active: Boolean) {
             }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(
             text = label,
-            color = if (active) t.ink else t.inkDim,
+            color = when {
+                active -> t.ink
+                disabled -> t.inkMute
+                else -> t.inkDim
+            },
             fontSize = 11.sp,
             letterSpacing = 0.14.em,
             fontFamily = JetBrainsMono,
         )
+        if (disabled) {
+            Text(
+                text = "SOON",
+                color = t.inkMute,
+                fontSize = 8.sp,
+                letterSpacing = 0.2.em,
+                fontFamily = JetBrainsMono,
+            )
+        }
     }
 }
 

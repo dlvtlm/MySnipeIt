@@ -101,6 +101,8 @@ fun SniperApp(viewModel: SniperViewModel) {
                 devices = availableDevices,
                 onDeviceSelected = { device -> viewModel.selectDevice(device) },
                 onBackClick = { viewModel.navigateToHome() },
+                onMapClick = { viewModel.navigateToMap() },
+                onDiagnosticsClick = { viewModel.navigateToDiagnostics() },
                 isDarkTheme = darkTheme,
                 onToggleTheme = { viewModel.toggleTheme() },
             )

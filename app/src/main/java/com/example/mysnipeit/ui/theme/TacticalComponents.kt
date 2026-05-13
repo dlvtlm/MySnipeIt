@@ -165,16 +165,19 @@ fun Bracket(
 // TopBar
 // ----------------------------------------------------------------------------
 /**
- * 36dp tall header used on every main screen. Left = brand + device context,
- * right = caller-supplied content (status chips, theme toggle, clock, etc.).
+ * 36dp tall header used on every main screen. Left = optional back button +
+ * brand + device context, right = caller-supplied content (status chips,
+ * theme toggle, clock, etc.).
  *
- * The design mock shows LINK / BAT / time on the right — I leave that to the
- * caller via [extra] so each screen only surfaces fields it actually has.
+ * When [onBackClick] is provided, a small "← BACK" button is rendered as the
+ * leftmost element. Putting it here means the back affordance lives in the
+ * same place on every screen (HomeScreen passes `null` since it's the root).
  */
 @Composable
 fun TopBar(
     device: String,
     modifier: Modifier = Modifier,
+    onBackClick: (() -> Unit)? = null,
     extra: @Composable (RowScope.() -> Unit) = {},
 ) {
     val t = LocalTactical.current
@@ -199,6 +202,22 @@ fun TopBar(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(16.dp),
         ) {
+            if (onBackClick != null) {
+                Box(
+                    modifier = Modifier
+                        .border(1.dp, t.line)
+                        .clickable(onClick = onBackClick)
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
+                ) {
+                    Text(
+                        text = "← BACK",
+                        color = t.ink,
+                        fontSize = 9.sp,
+                        letterSpacing = 0.18.em,
+                        fontFamily = JetBrainsMono,
+                    )
+                }
+            }
             Text(
                 text = "SNIPEIT // OPS",
                 color = t.ink,

@@ -62,7 +62,10 @@ fun DashboardScreen(
             .fillMaxSize()
             .background(t.base),
     ) {
-        TopBar(device = "OPERATOR · LIVE") {
+        TopBar(
+            device = "OPERATOR · LIVE",
+            onBackClick = onBackClick,
+        ) {
             // RTSP / connection chip
             val (chipText, chipTone) = when (systemStatus.connectionStatus) {
                 ConnectionState.CONNECTED -> "RTSP OK" to ChipTone.On
@@ -82,9 +85,8 @@ fun DashboardScreen(
                 )
             }
 
-            // Back + menu (mono icon-style buttons)
+            // Menu (kept; opens the Diagnostics shortcut dialog from MainActivity)
             TopBarIconButton(label = "MENU", onClick = onMenuClick)
-            TopBarIconButton(label = "← BACK", onClick = onBackClick)
             ThemeToggle(isDark = isDarkTheme, onToggle = onToggleTheme)
         }
 
@@ -346,8 +348,12 @@ private fun SensorStrip(
     modifier: Modifier = Modifier,
 ) {
     val t = LocalTactical.current
+    // FIXED height: without this, cells using fillMaxHeight() inside a
+    // BottomStart-aligned Box-child would expand to the Box's full height
+    // (the whole video region) — which is exactly what the user reported.
     Row(
         modifier = modifier
+            .height(68.dp)
             .background(t.panel)
             .drawBehind {
                 drawLine(
@@ -414,7 +420,7 @@ private fun SensorCell(
     val t = LocalTactical.current
     Column(
         modifier = modifier
-            .fillMaxHeight()
+            .fillMaxHeight()  // OK now — parent Row has a fixed 68dp height
             .drawBehind {
                 if (!hideRightBorder) {
                     drawLine(
@@ -425,7 +431,7 @@ private fun SensorCell(
                     )
                 }
             }
-            .padding(horizontal = 14.dp, vertical = 12.dp),
+            .padding(horizontal = 14.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.Center,
     ) {
         Lbl(text = label)

@@ -82,7 +82,10 @@ fun MapScreen(
             .fillMaxSize()
             .background(t.base),
     ) {
-        TopBar(device = "TACTICAL MAP") {
+        TopBar(
+            device = "TACTICAL MAP",
+            onBackClick = onBackClick,
+        ) {
             ThemeToggle(isDark = isDarkTheme, onToggle = onToggleTheme)
         }
         Row(modifier = Modifier.fillMaxSize()) {
@@ -138,9 +141,9 @@ fun MapScreen(
                         )
                     }
                 }
-                // Tactical chrome overlays (do NOT touch the map's input)
+                // Tactical chrome overlay — coords badge only. BACK now lives
+                // in the TopBar so it's in the same place across screens.
                 MgrsBadge()
-                BackButton(onBackClick = onBackClick)
             }
 
             // Right — 320dp intel pane (always present, with placeholder copy
@@ -178,28 +181,6 @@ private fun MgrsBadge() {
             text = "ZOOM 14 · UTM",
             color = t.inkDim,
             fontSize = 9.sp,
-            letterSpacing = 0.18.em,
-            fontFamily = JetBrainsMono,
-        )
-    }
-}
-
-@Composable
-private fun BoxScope.BackButton(onBackClick: () -> Unit) {
-    val t = LocalTactical.current
-    Box(
-        modifier = Modifier
-            .align(Alignment.TopEnd)
-            .padding(12.dp)
-            .background(t.panel.copy(alpha = 0.92f))
-            .border(1.dp, t.lineHi)
-            .clickable(onClick = onBackClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    ) {
-        Text(
-            text = "← BACK",
-            color = t.ink,
-            fontSize = 10.sp,
             letterSpacing = 0.18.em,
             fontFamily = JetBrainsMono,
         )
