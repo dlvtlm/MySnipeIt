@@ -348,11 +348,19 @@ private fun EnhancedTargetMarker(
     onLockClick: () -> Unit,
     onTargetClick: () -> Unit
 ) {
+    // Tactical palette — see ui/theme/Color.kt.
+    // Bone for tracked targets, copper for the selected/locked target.
+    // No saturated greens or cyans (the redesign brief).
+    val palette = LocalTactical.current
+    // High-visibility bbox colors over the live camera feed:
+    //   regular tracking → bright orange
+    //   locked target    → vivid red (high-alert)
+    // Values are identical in light + dark modes because the video region is
+    // always dark (real camera feed); contrast is against the video, not the
+    // surrounding UI.
     val markerColor = when {
-        isSelected -> Color(0xFFFF6B35)     // Orange for selected
-        isLocked -> Color(0xFFFFAA00)       // Amber for locked
-        target.targetType == "HUMAN" -> Color(0xFF038C16)  // Green
-        else -> Color(0xFF00D9FF)           // Cyan
+        isLocked -> palette.bboxLocked
+        else     -> palette.bboxTracked
     }
 
     var pulseAlpha by remember { mutableStateOf(1f) }
@@ -656,5 +664,4 @@ private fun VideoStatusOverlay(modifier: Modifier = Modifier) {
             fontFamily = FontFamily.Monospace
         )
     }
-}
 }

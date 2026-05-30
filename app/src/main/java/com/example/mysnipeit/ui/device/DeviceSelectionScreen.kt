@@ -1,344 +1,522 @@
 package com.example.mysnipeit.ui.device
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import com.example.mysnipeit.data.models.Device
 import com.example.mysnipeit.data.models.DeviceStatus
 import com.example.mysnipeit.ui.theme.*
 
-
+/**
+ * Device list screen — design B's card vocabulary rendered as
+ * vertically-stacked rows (the user's final pick).
+ *
+ * Layout:
+ *  - 36dp [TopBar] with "UNIT REGISTRY · N" device count
+ *  - Left 160dp sidebar nav: DEVICES (active) / MAP / LOGS / DIAG
+ *  - Right pane:
+ *      - Header: UNITS · LIVE label + "SELECT TO CONNECT" + filter tabs
+ *      - Stacked rows — each row is a 7-cell horizontal table:
+ *            letter / name+sector+IP / status chip / battery bar / link /
+ *            range / action (CONNECT / DETAILS / UNREACHABLE)
+ */
 @Composable
 fun DeviceSelectionScreen(
     devices: List<Device>,
     onDeviceSelected: (Device) -> Unit,
-    onBackClick: () -> Unit
+    onBackClick: () -> Unit,
+    onMapClick: () -> Unit = {},
+    onDiagnosticsClick: () -> Unit = {},
+    isDarkTheme: Boolean = true,
+    onToggleTheme: () -> Unit = {},
 ) {
+    val t = LocalTactical.current
     var selectedDevice by remember { mutableStateOf<Device?>(null) }
     var showInactiveWarning by remember { mutableStateOf(false) }
 
-    Box(
+    Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MilitaryDarkBackground)
+            .background(t.base),
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp)
+        TopBar(
+            device = "UNIT REGISTRY · ${devices.size}",
+            onBackClick = onBackClick,
         ) {
-            // Header with back button
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(bottom = 24.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Button(
-                    onClick = onBackClick,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MilitaryBorderColor
-                    ),
-                    modifier = Modifier.size(48.dp),
-                    contentPadding = PaddingValues(0.dp)
-                ) {
-                    Text(
-                        text = "←",
-                        fontSize = 24.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MilitaryTextPrimary
-                    )
-                }
+            ThemeToggle(isDark = isDarkTheme, onToggle = onToggleTheme)
+        }
+        Row(modifier = Modifier.fillMaxSize()) {
+            SidebarNav(
+                count = devices.size,
+                onMapClick = onMapClick,
+                onDiagnosticsClick = onDiagnosticsClick,
+            )
+            DeviceListPane(
+                devices = devices,
+                onPick = { device ->
+                    if (device.status == DeviceStatus.INACTIVE) {
+                        showInactiveWarning = true
+                    } else {
+                        selectedDevice = device
+                    }
+                },
+            )
+        }
+    }
 
-                Text(
-                    text = "DEVICE LIST",
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MilitaryTextPrimary,
-                    fontFamily = FontFamily.Monospace
+    selectedDevice?.let { device ->
+        DeviceDetailsDialog(
+            device = device,
+            onDismiss = { selectedDevice = null },
+            onConnect = {
+                onDeviceSelected(device)
+                selectedDevice = null
+            },
+        )
+    }
+    if (showInactiveWarning) {
+        InactiveDeviceDialog(onDismiss = { showInactiveWarning = false })
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Sidebar nav (left rail)
+//
+// LOGS removed entirely — the app doesn't have a log screen, so showing the
+// label was misleading. The other items are wired to real navigation:
+//   DEVICES → no-op (we're already here)
+//   MAP     → onMapClick
+//   DIAG    → onDiagnosticsClick
+// ----------------------------------------------------------------------------
+@Composable
+private fun SidebarNav(
+    count: Int,
+    onMapClick: () -> Unit,
+    onDiagnosticsClick: () -> Unit,
+) {
+    val t = LocalTactical.current
+    Column(
+        modifier = Modifier
+            .width(160.dp)
+            .fillMaxHeight()
+            .background(t.panel)
+            .drawBehind {
+                drawLine(
+                    color = t.line,
+                    start = Offset(size.width, 0f),
+                    end = Offset(size.width, size.height),
+                    strokeWidth = 1.dp.toPx(),
                 )
             }
-
-            // Device count
-            Text(
-                text = "${devices.size} DEVICES AVAILABLE",
-                fontSize = 14.sp,
-                color = MilitaryTextSecondary,
-                fontFamily = FontFamily.Monospace,
-                modifier = Modifier.padding(bottom = 16.dp)
-            )
-
-            // Device list
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-                modifier = Modifier.weight(1f)
-            ) {
-                items(devices) { device ->
-                    DeviceCard(
-                        device = device,
-                        onDeviceClick = {
-                            // Check if device is inactive
-                            if (device.status == DeviceStatus.INACTIVE) {
-                                showInactiveWarning = true
-                            } else {
-                                selectedDevice = device
-                            }
-                        }
-                    )
-                }
-            }
-        }
-
-        // Show dialog when device is selected
-        selectedDevice?.let { device ->
-            DeviceDetailsDialog(
-                device = device,
-                onDismiss = { selectedDevice = null },
-                onConnect = {
-                    onDeviceSelected(device)
-                    selectedDevice = null
-                }
-            )
-        }
-
-        // Inactive Device Warning Dialog
-        if (showInactiveWarning) {
-            InactiveDeviceDialog(
-                onDismiss = { showInactiveWarning = false }
-            )
-        }
+            .padding(vertical = 20.dp),
+    ) {
+        SidebarNavItem(label = "DEVICES", badge = count.toString(), active = true, onClick = null)
+        SidebarNavItem(label = "MAP",     badge = "", active = false, onClick = onMapClick)
+        SidebarNavItem(label = "DIAG",    badge = "", active = false, onClick = onDiagnosticsClick)
     }
 }
 
 @Composable
-private fun DeviceCard(
-    device: Device,
-    onDeviceClick: () -> Unit
+private fun SidebarNavItem(
+    label: String,
+    badge: String,
+    active: Boolean,
+    onClick: (() -> Unit)?,
 ) {
-    val isInactive = device.status == DeviceStatus.INACTIVE
-
-    val statusColor = when (device.status) {
-        DeviceStatus.ACTIVE -> StatusConnected
-        DeviceStatus.SCANNING -> StatusConnecting
-        DeviceStatus.INACTIVE -> StatusDisconnected
-        DeviceStatus.ERROR -> StatusError
-    }
-
-    Card(
+    val t = LocalTactical.current
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(enabled = !isInactive) { onDeviceClick() },
-        colors = CardDefaults.cardColors(
-            containerColor = if (device.status == DeviceStatus.ACTIVE) {
-                MilitaryAccentGreen.copy(alpha = 0.1f)
-            } else if (isInactive) {
-                MilitaryCardBackground.copy(alpha = 0.5f)
-            } else {
-                MilitaryCardBackground
-            }
-        ),
-        border = androidx.compose.foundation.BorderStroke(
-            2.dp,
-            if (device.status == DeviceStatus.ACTIVE) {
-                MilitaryAccentGreen
-            } else if (isInactive) {
-                MilitaryBorderColor.copy(alpha = 0.3f)
-            } else {
-                MilitaryBorderColor
-            }
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(20.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(
-                modifier = Modifier.weight(1f)
-            ) {
-                Text(
-                    text = device.name,
-                    fontSize = 18.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isInactive) {
-                        MilitaryTextPrimary.copy(alpha = 0.4f)
-                    } else {
-                        MilitaryTextPrimary
-                    },
-                    fontFamily = FontFamily.Monospace
-                )
-
-                Text(
-                    text = "Location: ${device.location}",
-                    fontSize = 14.sp,
-                    color = if (isInactive) {
-                        MilitaryTextSecondary.copy(alpha = 0.4f)
-                    } else {
-                        MilitaryTextSecondary
-                    },
-                    fontFamily = FontFamily.Monospace
-                )
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Text(
-                        text = "Status:",
-                        fontSize = 14.sp,
-                        color = if (isInactive) {
-                            MilitaryTextSecondary.copy(alpha = 0.4f)
-                        } else {
-                            MilitaryTextSecondary
-                        },
-                        fontFamily = FontFamily.Monospace
-                    )
-
-                    Text(
-                        text = device.status.name,
-                        fontSize = 14.sp,
-                        color = if (isInactive) {
-                            statusColor.copy(alpha = 0.4f)
-                        } else {
-                            statusColor
-                        },
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold
+            .background(if (active) t.panelHi else Color.Transparent)
+            .drawBehind {
+                if (active) {
+                    drawLine(
+                        color = t.accent,
+                        start = Offset(0f, 0f),
+                        end = Offset(0f, size.height),
+                        strokeWidth = 2.dp.toPx(),
                     )
                 }
-
-                Text(
-                    text = "Battery: ${device.batteryLevel}%",
-                    fontSize = 14.sp,
-                    color = if (isInactive) {
-                        MilitaryTextSecondary.copy(alpha = 0.4f)
-                    } else if (device.batteryLevel > 20) {
-                        MilitaryAccentGreen
-                    } else {
-                        MilitaryDangerRed
-                    },
-                    fontFamily = FontFamily.Monospace
-                )
             }
-
-            // Connect Button - Dimmed for inactive devices
-            Button(
-                onClick = onDeviceClick,
-                enabled = !isInactive,
-                modifier = Modifier.width(100.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isInactive) {
-                        MilitaryBorderColor.copy(alpha = 0.3f)
-                    } else {
-                        MilitaryAccentGreen
-                    },
-                    contentColor = if (isInactive) {
-                        MilitaryTextPrimary.copy(alpha = 0.3f)
-                    } else {
-                        Color.Black
-                    },
-                    disabledContainerColor = MilitaryBorderColor.copy(alpha = 0.3f),
-                    disabledContentColor = MilitaryTextPrimary.copy(alpha = 0.3f)
-                )
-            ) {
-                Text(
-                    text = "CONNECT",
-                    fontSize = 11.sp,
-                    fontFamily = FontFamily.Monospace,
-                    fontWeight = FontWeight.Bold
-                )
-            }
-
-            Spacer(modifier = Modifier.width(8.dp))
-
-            Box(
-                modifier = Modifier
-                    .size(16.dp)
-                    .background(
-                        if (isInactive) {
-                            statusColor.copy(alpha = 0.4f)
-                        } else {
-                            statusColor
-                        },
-                        androidx.compose.foundation.shape.CircleShape
-                    )
+            .let { m -> if (onClick != null) m.clickable(onClick = onClick) else m }
+            .padding(horizontal = 22.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = label,
+            color = if (active) t.ink else t.inkDim,
+            fontSize = 11.sp,
+            letterSpacing = 0.18.em,
+            fontFamily = JetBrainsMono,
+        )
+        if (badge.isNotEmpty()) {
+            Text(
+                text = badge,
+                color = t.inkMute,
+                fontSize = 9.sp,
+                fontFamily = JetBrainsMono,
             )
         }
     }
 }
 
+// ----------------------------------------------------------------------------
+// Right pane — header + filter tabs + stacked rows
+// ----------------------------------------------------------------------------
 @Composable
-private fun InactiveDeviceDialog(
-    onDismiss: () -> Unit
+private fun DeviceListPane(
+    devices: List<Device>,
+    onPick: (Device) -> Unit,
 ) {
-    Dialog(onDismissRequest = onDismiss) {
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = MilitaryCardBackground
-            ),
-            shape = RoundedCornerShape(12.dp),
-            border = androidx.compose.foundation.BorderStroke(2.dp, MilitaryDangerRed)
+    val t = LocalTactical.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(24.dp),
+    ) {
+        // Header row: label + filter tabs
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            Column(
-                modifier = Modifier
-                    .padding(24.dp)
-                    .widthIn(min = 300.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
+            Column {
+                Lbl(text = "UNITS · LIVE")
+                Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "CONNECTION UNAVAILABLE",
-                    fontSize = 20.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MilitaryDangerRed,
-                    fontFamily = FontFamily.Monospace
+                    text = "SELECT TO CONNECT",
+                    color = t.ink,
+                    fontSize = 22.sp,
+                    letterSpacing = 0.06.em,
+                    fontFamily = JetBrainsMono,
                 )
+            }
+            // Filter tabs — purely cosmetic for now; counts derived live
+            val activeCount = devices.count { it.status == DeviceStatus.ACTIVE }
+            val offlineCount = devices.count { it.status == DeviceStatus.INACTIVE || it.status == DeviceStatus.ERROR }
+            Row {
+                FilterTab(text = "ALL · ${devices.size}",  active = true)
+                FilterTab(text = "ACTIVE · $activeCount", active = false)
+                FilterTab(text = "OFFLINE · $offlineCount", active = false)
+            }
+        }
+        Spacer(Modifier.height(18.dp))
+        // Stacked device rows
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            items(devices) { device ->
+                DeviceRow(device = device, onClick = { onPick(device) })
+            }
+        }
+    }
+}
 
-                Spacer(modifier = Modifier.height(16.dp))
+@Composable
+private fun FilterTab(text: String, active: Boolean) {
+    val t = LocalTactical.current
+    Box(
+        modifier = Modifier
+            .border(1.dp, t.line)
+            .background(if (active) t.panel else Color.Transparent)
+            .padding(horizontal = 14.dp, vertical = 8.dp)
+    ) {
+        Text(
+            text = text,
+            color = if (active) t.ink else t.inkDim,
+            fontSize = 10.sp,
+            letterSpacing = 0.18.em,
+            fontFamily = JetBrainsMono,
+        )
+    }
+}
 
-                Text(
-                    text = "Cannot connect to inactive device.",
-                    fontSize = 14.sp,
-                    color = MilitaryTextPrimary,
-                    fontFamily = FontFamily.Monospace
-                )
+// ----------------------------------------------------------------------------
+// One device row
+// ----------------------------------------------------------------------------
+@Composable
+private fun DeviceRow(device: Device, onClick: () -> Unit) {
+    val t = LocalTactical.current
+    val isActive = device.status == DeviceStatus.ACTIVE
+    val isOffline = device.status == DeviceStatus.INACTIVE || device.status == DeviceStatus.ERROR
 
-                Text(
-                    text = "Please ensure the device is powered on and in range.",
-                    fontSize = 14.sp,
-                    color = MilitaryTextSecondary,
-                    fontFamily = FontFamily.Monospace
-                )
+    // Letter we display in the left cell — derive from the trailing digit of the id.
+    val letter = remember(device.id) {
+        when {
+            device.id.endsWith("1") -> "A"
+            device.id.endsWith("2") -> "B"
+            device.id.endsWith("3") -> "C"
+            device.id.endsWith("4") -> "D"
+            else -> device.id.lastOrNull()?.uppercaseChar()?.toString() ?: "?"
+        }
+    }
 
-                Spacer(modifier = Modifier.height(24.dp))
-
-                Button(
-                    onClick = onDismiss,
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = MilitaryAccentGreen
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (isActive) t.panelHi else t.panel)
+            .border(1.dp, if (isActive) t.lineHi else t.line)
+            .clickable(enabled = !isOffline, onClick = onClick)
+            .height(IntrinsicSize.Min),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Letter cell
+        Box(
+            modifier = Modifier
+                .width(56.dp)
+                .fillMaxHeight()
+                .drawBehind {
+                    drawLine(
+                        color = t.line,
+                        start = Offset(size.width, 0f),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = 1.dp.toPx(),
                     )
-                ) {
+                },
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = letter,
+                color = t.ink,
+                fontSize = 18.sp,
+                fontFamily = JetBrainsMono,
+            )
+        }
+        // Name + sector + IP
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(horizontal = 18.dp, vertical = 14.dp)
+                .drawBehind {
+                    drawLine(
+                        color = t.line,
+                        start = Offset(size.width, 0f),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                },
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Text(
+                text = device.name.uppercase(),
+                color = t.ink,
+                fontSize = 13.sp,
+                letterSpacing = 0.1.em,
+                fontFamily = JetBrainsMono,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "${device.location.uppercase()} · ${device.ipAddress}",
+                color = t.inkDim,
+                fontSize = 9.sp,
+                letterSpacing = 0.2.em,
+                fontFamily = JetBrainsMono,
+            )
+        }
+        // Status chip
+        CellWithRightBorder(width = 110.dp) {
+            val tone = when (device.status) {
+                DeviceStatus.ACTIVE -> ChipTone.On
+                DeviceStatus.INACTIVE -> ChipTone.Danger
+                DeviceStatus.SCANNING -> ChipTone.Warn
+                DeviceStatus.ERROR -> ChipTone.Danger
+            }
+            val statusText = when (device.status) {
+                DeviceStatus.ACTIVE -> "ACTIVE"
+                DeviceStatus.INACTIVE -> "OFFLINE"
+                DeviceStatus.SCANNING -> "STANDBY"
+                DeviceStatus.ERROR -> "ERROR"
+            }
+            Chip(text = statusText, tone = tone)
+        }
+        // Battery bar
+        CellWithRightBorder(width = 130.dp) {
+            Column {
+                Lbl(text = "BATT")
+                Spacer(Modifier.height(6.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .width(48.dp)
+                            .height(4.dp)
+                            .background(t.line)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxHeight()
+                                .fillMaxWidth(device.batteryLevel / 100f)
+                                .background(t.lineHi)
+                        )
+                    }
+                    Spacer(Modifier.width(8.dp))
                     Text(
-                        text = "OK",
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.Black
+                        text = "${device.batteryLevel}%",
+                        color = t.ink,
+                        fontSize = 13.sp,
+                        fontFamily = JetBrainsMono,
                     )
                 }
+            }
+        }
+        // Link (we don't have real latency yet; show dash for offline, OK otherwise)
+        CellWithRightBorder(width = 110.dp) {
+            Column {
+                Lbl(text = "LINK")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = if (isOffline) "—" else "OK",
+                    color = t.ink,
+                    fontSize = 14.sp,
+                    fontFamily = JetBrainsMono,
+                )
+            }
+        }
+        // Range (placeholder; the app doesn't compute distance to nodes yet)
+        CellWithRightBorder(width = 110.dp) {
+            Column {
+                Lbl(text = "RANGE")
+                Spacer(Modifier.height(4.dp))
+                Row(verticalAlignment = Alignment.Bottom) {
+                    Text(
+                        text = "—",
+                        color = t.ink,
+                        fontSize = 14.sp,
+                        fontFamily = JetBrainsMono,
+                    )
+                    Spacer(Modifier.width(4.dp))
+                    Text(
+                        text = "KM",
+                        color = t.inkMute,
+                        fontSize = 10.sp,
+                        fontFamily = JetBrainsMono,
+                    )
+                }
+            }
+        }
+        // Action cell
+        Box(
+            modifier = Modifier
+                .width(140.dp)
+                .fillMaxHeight()
+                .padding(horizontal = 8.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            when {
+                isOffline -> Text(
+                    text = "UNREACHABLE",
+                    color = t.danger,
+                    fontSize = 10.sp,
+                    letterSpacing = 0.18.em,
+                    fontFamily = JetBrainsMono,
+                )
+                else -> Box(
+                    modifier = Modifier
+                        .background(if (isActive) t.panelHi else Color.Transparent)
+                        .border(1.dp, t.lineHi)
+                        .clickable(onClick = onClick)
+                        .padding(horizontal = 18.dp, vertical = 10.dp)
+                ) {
+                    Text(
+                        text = if (isActive) "CONNECT →" else "DETAILS →",
+                        color = t.ink,
+                        fontSize = 11.sp,
+                        letterSpacing = 0.18.em,
+                        fontFamily = JetBrainsMono,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CellWithRightBorder(width: androidx.compose.ui.unit.Dp, content: @Composable () -> Unit) {
+    val t = LocalTactical.current
+    Box(
+        modifier = Modifier
+            .width(width)
+            .fillMaxHeight()
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .drawBehind {
+                drawLine(
+                    color = t.line,
+                    start = Offset(size.width + 16.dp.toPx(), 0f),
+                    end = Offset(size.width + 16.dp.toPx(), size.height),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            },
+        contentAlignment = Alignment.CenterStart,
+    ) { content() }
+}
+
+// ----------------------------------------------------------------------------
+// Dialogs — restyled to the tactical palette
+// ----------------------------------------------------------------------------
+@Composable
+private fun InactiveDeviceDialog(onDismiss: () -> Unit) {
+    val t = LocalTactical.current
+    Dialog(onDismissRequest = onDismiss) {
+        Column(
+            modifier = Modifier
+                .background(t.panel)
+                .border(1.dp, t.danger)
+                .padding(24.dp)
+                .widthIn(min = 300.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Text(
+                text = "CONNECTION UNAVAILABLE",
+                color = t.danger,
+                fontSize = 14.sp,
+                letterSpacing = 0.18.em,
+                fontFamily = JetBrainsMono,
+            )
+            Spacer(Modifier.height(16.dp))
+            Text(
+                text = "Cannot connect to offline node.",
+                color = t.ink,
+                fontSize = 13.sp,
+                fontFamily = JetBrainsMono,
+            )
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "Ensure the device is powered on and in range.",
+                color = t.inkDim,
+                fontSize = 12.sp,
+                fontFamily = JetBrainsMono,
+            )
+            Spacer(Modifier.height(20.dp))
+            Box(
+                modifier = Modifier
+                    .background(t.panelHi)
+                    .border(1.dp, t.lineHi)
+                    .clickable(onClick = onDismiss)
+                    .padding(horizontal = 28.dp, vertical = 10.dp),
+            ) {
+                Text(
+                    text = "OK",
+                    color = t.ink,
+                    fontSize = 11.sp,
+                    letterSpacing = 0.24.em,
+                    fontFamily = JetBrainsMono,
+                )
             }
         }
     }
@@ -348,73 +526,53 @@ private fun InactiveDeviceDialog(
 private fun DeviceDetailsDialog(
     device: Device,
     onDismiss: () -> Unit,
-    onConnect: () -> Unit
+    onConnect: () -> Unit,
 ) {
+    val t = LocalTactical.current
     Dialog(onDismissRequest = onDismiss) {
-        Card(
-            colors = CardDefaults.cardColors(
-                containerColor = MilitaryCardBackground
-            ),
-            shape = RoundedCornerShape(12.dp),
-            border = androidx.compose.foundation.BorderStroke(2.dp, MilitaryAccentGreen)
+        Column(
+            modifier = Modifier
+                .background(t.panel)
+                .border(1.dp, t.lineHi)
+                .padding(24.dp)
+                .widthIn(min = 320.dp),
         ) {
-            Column(
-                modifier = Modifier
-                    .padding(24.dp)
-                    .widthIn(min = 300.dp),
-                horizontalAlignment = Alignment.CenterHorizontally
-            ) {
-                Text(
-                    text = device.name,
-                    fontSize = 24.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MilitaryTextPrimary,
-                    fontFamily = FontFamily.Monospace
-                )
+            Lbl(text = "SELECTED · ${device.id.uppercase()}")
+            Spacer(Modifier.height(6.dp))
+            Text(
+                text = device.name.uppercase(),
+                color = t.ink,
+                fontSize = 22.sp,
+                letterSpacing = 0.08.em,
+                fontFamily = JetBrainsMono,
+            )
+            Spacer(Modifier.height(16.dp))
 
-                Spacer(modifier = Modifier.height(24.dp))
+            DetailRow("LOCATION", device.location)
+            DetailRow("STATUS", device.status.name)
+            DetailRow("BATTERY", "${device.batteryLevel}%")
+            DetailRow("IP", device.ipAddress)
+            DetailRow("LATITUDE", String.format("%.6f", device.latitude))
+            DetailRow("LONGITUDE", String.format("%.6f", device.longitude))
 
-                // Device details
-                DeviceDetailRow("Location", device.location)
-                DeviceDetailRow("Longitude", device.longitude.toString())
-                DeviceDetailRow("Latitude", device.latitude.toString())
-                DeviceDetailRow("Status", device.status.name)
-                DeviceDetailRow("Battery", "${device.batteryLevel}%")
-                DeviceDetailRow("IP Address", device.ipAddress)
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Action buttons
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+            Spacer(Modifier.height(20.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                Box(
+                    modifier = Modifier
+                        .border(1.dp, t.line)
+                        .clickable(onClick = onDismiss)
+                        .padding(horizontal = 18.dp, vertical = 10.dp),
                 ) {
-                    OutlinedButton(
-                        onClick = onDismiss,
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            contentColor = MilitaryTextPrimary
-                        ),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MilitaryBorderColor)
-                    ) {
-                        Text(
-                            text = "CANCEL",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold
-                        )
-                    }
-
-                    Button(
-                        onClick = onConnect,
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MilitaryAccentGreen
-                        )
-                    ) {
-                        Text(
-                            text = "CONNECT",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Black
-                        )
-                    }
+                    Text("CANCEL", color = t.inkDim, fontSize = 11.sp, letterSpacing = 0.18.em, fontFamily = JetBrainsMono)
+                }
+                Box(
+                    modifier = Modifier
+                        .background(t.panelHi)
+                        .border(1.dp, t.lineHi)
+                        .clickable(onClick = onConnect)
+                        .padding(horizontal = 18.dp, vertical = 10.dp),
+                ) {
+                    Text("CONNECT →", color = t.ink, fontSize = 11.sp, letterSpacing = 0.18.em, fontFamily = JetBrainsMono)
                 }
             }
         }
@@ -422,25 +580,15 @@ private fun DeviceDetailsDialog(
 }
 
 @Composable
-private fun DeviceDetailRow(label: String, value: String) {
+private fun DetailRow(label: String, value: String) {
+    val t = LocalTactical.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween
+        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Text(
-            text = "$label:",
-            fontSize = 14.sp,
-            color = MilitaryTextSecondary,
-            fontFamily = FontFamily.Monospace
-        )
-        Text(
-            text = value,
-            fontSize = 14.sp,
-            color = MilitaryTextPrimary,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold
-        )
+        Text(label, color = t.inkDim, fontSize = 10.sp, letterSpacing = 0.18.em, fontFamily = JetBrainsMono)
+        Text(value, color = t.ink, fontSize = 11.sp, fontFamily = JetBrainsMono)
     }
 }

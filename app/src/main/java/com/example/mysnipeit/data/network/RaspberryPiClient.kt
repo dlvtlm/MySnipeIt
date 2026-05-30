@@ -412,16 +412,37 @@ class RaspberryPiClient {
         mockDataJob?.cancel()
         mockDataJob = scope.launch {
             while (isActive) {
-                // 1. Generate mock sensor data
+                // 1. Generate mock sensor data — nested structure mirroring
+                //    the Pi's new ddl_frame format. Servo is omitted (it's
+                //    not displayed on the dashboard and only matters once the
+                //    ballistics calc is wired up).
                 _sensorData.value = SensorData(
-                    temperature = 20.0 + (Math.random() * 10),
-                    humidity = 50.0 + (Math.random() * 20),
-                    windSpeed = 5.0 + (Math.random() * 10),
-                    windDirection = (Math.random() * 360).toInt().toDouble(),
-                    rangefinderDistance = 400.0 + (Math.random() * 200),
-                    gpsLatitude = 35.0 + (Math.random() * 10),
-                    gpsLongitude = 32.0 + (Math.random() * 10),
-                    timestamp = System.currentTimeMillis()
+                    type = "sensor_data",
+                    timestamp = System.currentTimeMillis(),
+                    ddlFrame = DdlFrame(
+                        distance = DistanceFrame(
+                            valid = true,
+                            distanceM = (400f + Math.random().toFloat() * 200f),
+                            status = 0,
+                            precision = 1,
+                            strength = 1200,
+                        ),
+                        temperatureHumidity = TempHumidityFrame(
+                            valid = true,
+                            temperatureC = (20f + Math.random().toFloat() * 10f),
+                            humidityPct = (50f + Math.random().toFloat() * 20f),
+                        ),
+                        servo = null,
+                        gps = GpsFrame(
+                            valid = true,
+                            fixType = 3,
+                            numSatellites = 9,
+                            latitudeDeg = 31.51 + Math.random() * 0.02,
+                            longitudeDeg = 34.52 + Math.random() * 0.02,
+                            altitudeM = 35.0,
+                            hAccM = 1.4,
+                        ),
+                    ),
                 )
 
                 //  2. GENERATE MOCK TARGETS with bbox in pixels
@@ -726,16 +747,24 @@ class RaspberryPiClient {
 /**
  * Expected JSON format from RPi5:
  *
- * Sensor Data:
+ * Sensor Data — nested ddl_frame format (mirrors the Pi-side C structs):
  * {
  *   "type": "sensor_data",
- *   "temperature": 25.5,
- *   "humidity": 65.0,
- *   "windSpeed": 8.2,
- *   "windDirection": 245,
- *   "rangefinderDistance": 420.5,
- *   "timestamp": 1234567890
+ *   "timestamp": 1748600000000,
+ *   "ddl_frame": {
+ *     "distance":             { "valid": true, "distance_m": 420.5, "status": 0, "precision": 1, "strength": 1240 },
+ *     "temperature_humidity": { "valid": true, "temperature_c": 23.5, "humidity_pct": 47.1 },
+ *     "servo":                { "horizontal_deg": 87.3, "vertical_deg": 12.4 },
+ *     "gps":                  { "valid": true, "fix_type": 3, "num_satellites": 9,
+ *                                "latitude_deg": 32.07, "longitude_deg": 34.78,
+ *                                "altitude_m": 35.2, "h_acc_m": 1.4 }
+ *   }
  * }
+ *
+ * Display rule on the app side: each sub-frame's `valid` flag gates whether
+ * the dashboard renders the values. ServoFrame has no `valid` and is treated
+ * as always valid when the sub-frame is present. See [SensorData] for the
+ * exact Kotlin shape and the helper extensions used by the dashboard.
  *
  * Target Detection:
  * {

@@ -1,27 +1,46 @@
 package com.example.mysnipeit.ui.dashboard
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Menu
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import com.example.mysnipeit.data.models.SensorData
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
+import androidx.compose.ui.unit.sp
+import com.example.mysnipeit.data.models.ConnectionState
 import com.example.mysnipeit.data.models.DetectedTarget
+import com.example.mysnipeit.data.models.SensorData
 import com.example.mysnipeit.data.models.ShootingSolution
 import com.example.mysnipeit.data.models.SystemStatus
-import com.example.mysnipeit.data.models.ConnectionState
+import com.example.mysnipeit.data.models.distanceM
+import com.example.mysnipeit.data.models.gpsLatLon
+import com.example.mysnipeit.data.models.gpsSatellites
+import com.example.mysnipeit.data.models.humidityPct
+import com.example.mysnipeit.data.models.temperatureC
 import com.example.mysnipeit.ui.theme.*
-import android.util.Log
 
+/**
+ * Operator HUD — redesigned to the design's "A layout + dense sensor bar"
+ * variant. ALL of the data flow stays — only the chrome around the
+ * [TacticalVideoPlayer] changes.
+ *
+ *  - 36dp [TopBar]: "NODE-CHARLIE · LIVE" + RTSP/CONN chip + back/menu/toggle
+ *  - Video fills the rest of the screen with overlays anchored to its edges:
+ *      top-left  : TARGETS rail (panel)
+ *      top-right : FIRING SOLUTION card (panel)
+ *      bottom    : 8-cell sensor strip + UNLOCK button
+ *
+ * Target reticles inside the video region (corner brackets, bone for
+ * tracked, copper for locked) are drawn by [TacticalVideoPlayer]; this
+ * file just wraps it in the new chrome.
+ */
 @Composable
 fun DashboardScreen(
     sensorData: SensorData?,
@@ -36,309 +55,414 @@ fun DashboardScreen(
     onTargetSelect: (String) -> Unit = {},
     onTargetLockToggle: (String, Boolean) -> Unit = { _, _ -> },
     onBackClick: () -> Unit = {},
-    onMenuClick: () -> Unit = {}
+    onMenuClick: () -> Unit = {},
+    isDarkTheme: Boolean = true,
+    onToggleTheme: () -> Unit = {},
 ) {
+    val t = LocalTactical.current
+    val lockedTarget = detectedTargets.firstOrNull { it.id == selectedTargetId }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(MilitaryDarkBackground)
+            .background(t.base),
     ) {
-        // Top HUD Bar with Shooting Solution
-        TopHudBar(
-            sensorData = sensorData,
-            shootingSolution = shootingSolution,
-            systemStatus = systemStatus,
-            selectedTargetId = selectedTargetId,
+        TopBar(
+            device = "OPERATOR · LIVE",
             onBackClick = onBackClick,
-            onMenuClick = onMenuClick,
-            onConnectClick = onConnectClick,
-            onDisconnectClick = onDisconnectClick
-        )
+        ) {
+            // RTSP / connection chip
+            val (chipText, chipTone) = when (systemStatus.connectionStatus) {
+                ConnectionState.CONNECTED -> "RTSP OK" to ChipTone.On
+                ConnectionState.CONNECTING -> "CONNECTING" to ChipTone.Warn
+                ConnectionState.DISCONNECTED -> "OFFLINE" to ChipTone.Danger
+                ConnectionState.ERROR -> "ERROR" to ChipTone.Danger
+            }
+            Chip(text = chipText, tone = chipTone)
 
-        // Main Video Feed
+            systemStatus.batteryLevel?.let { bat ->
+                Text(
+                    text = "BAT $bat%",
+                    color = if (bat > 20) t.ink else t.danger,
+                    fontSize = 10.sp,
+                    letterSpacing = 0.14.em,
+                    fontFamily = JetBrainsMono,
+                )
+            }
+
+            // Menu (kept; opens the Diagnostics shortcut dialog from MainActivity)
+            TopBarIconButton(label = "MENU", onClick = onMenuClick)
+            ThemeToggle(isDark = isDarkTheme, onToggle = onToggleTheme)
+        }
+
+        // Video region with overlays
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .weight(1f)
+                .weight(1f),
         ) {
-            VideoFeedSection(
+            TacticalVideoPlayer(
                 detectedTargets = detectedTargets,
                 shootingSolution = shootingSolution,
                 selectedTargetId = selectedTargetId,
-                systemStatus = systemStatus,
+                connectionState = systemStatus.connectionStatus,
                 streamReady = streamReady,
-                rtspStreamUrl = rtspStreamUrl,
+                videoStreamUrl = rtspStreamUrl,
+                onTargetClick = {},
                 onTargetSelect = onTargetSelect,
                 onTargetLockToggle = onTargetLockToggle,
-                modifier = Modifier.fillMaxSize()
+                modifier = Modifier.fillMaxSize(),
+            )
+
+            // Top-left: target list rail
+            TargetListRail(
+                targets = detectedTargets,
+                selectedTargetId = selectedTargetId,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(16.dp),
+            )
+
+            // Top-right: firing-solution card (shown only when a target is locked)
+            if (lockedTarget != null && shootingSolution != null) {
+                FiringSolutionCard(
+                    targetId = lockedTarget.id,
+                    solution = shootingSolution,
+                    rangefinder = sensorData.distanceM()?.toDouble(),
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(16.dp)
+                        .width(280.dp),
+                )
+            }
+
+            // Bottom: dense 8-cell sensor strip + UNLOCK button
+            SensorStrip(
+                sensorData = sensorData,
+                hasLockedTarget = lockedTarget != null,
+                onUnlock = {
+                    lockedTarget?.let { onTargetLockToggle(it.id, false) }
+                    onTargetSelect("")
+                },
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .fillMaxWidth(),
             )
         }
     }
 }
 
+// ----------------------------------------------------------------------------
+// Top bar small icon button (text-only, mono)
+// ----------------------------------------------------------------------------
 @Composable
-private fun TopHudBar(
-    sensorData: SensorData?,
-    shootingSolution: ShootingSolution?,
-    systemStatus: SystemStatus,
-    selectedTargetId: String?,
-    onBackClick: () -> Unit,
-    onMenuClick: () -> Unit,
-    onConnectClick: () -> Unit,
-    onDisconnectClick: () -> Unit
-) {
-    Surface(
+private fun TopBarIconButton(label: String, onClick: () -> Unit) {
+    val t = LocalTactical.current
+    Box(
         modifier = Modifier
-            .fillMaxWidth()
-            .height(80.dp),
-        color = MilitaryCardBackground.copy(alpha = 0.95f)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Left section - Navigation
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                IconButton(
-                    onClick = onBackClick,
-                    modifier = Modifier
-                        .size(32.dp)
-                        .background(
-                            MilitaryBorderColor,
-                            RoundedCornerShape(4.dp)
-                        )
-                ) {
-                    Text(
-                        text = "←",
-                        color = MilitaryTextPrimary,
-                        fontSize = 16.sp,
-                        fontWeight = FontWeight.Bold
-                    )
-                }
-
-                IconButton(
-                    onClick = onMenuClick,
-                    modifier = Modifier
-                        .size(32.dp)
-                        .background(
-                            MilitaryBorderColor,
-                            RoundedCornerShape(4.dp)
-                        )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Menu,
-                        contentDescription = "Menu",
-                        tint = MilitaryTextPrimary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                }
-            }
-
-            //  Center section - Shooting Solution Data
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                // Only show solution if target is selected
-                if (shootingSolution != null) {
-                    HudDataBox(
-                        label = "TGT",
-                        value = shootingSolution.targetId,
-                        isActive = true,
-                        textColor = Color(0xFFFF6B35)  // Orange for active target
-                    )
-                    HudDataBox(
-                        label = "AZ",
-                        value = "${shootingSolution.azimuth.toInt()}°",
-                        isActive = true
-                    )
-                    HudDataBox(
-                        label = "EL",
-                        value = "${if (shootingSolution.elevation > 0) "+" else ""}${shootingSolution.elevation.toInt()}°",
-                        isActive = true
-                    )
-                    HudDataBox(
-                        label = "CONF",
-                        value = "${(shootingSolution.confidence * 100).toInt()}%",
-                        isActive = shootingSolution.confidence > 0.7f,
-                        textColor = when {
-                            shootingSolution.confidence > 0.8f -> Color(0xFF038C16)
-                            shootingSolution.confidence > 0.6f -> Color(0xFFFFAA00)
-                            else -> Color(0xFFFF4444)
-                        }
-                    )
-                } else {
-                    // No target selected - show dashes
-                    HudDataBox(label = "TGT", value = "--", isActive = false)
-                    HudDataBox(label = "AZ", value = "--", isActive = false)
-                    HudDataBox(label = "EL", value = "--", isActive = false)
-                    HudDataBox(label = "CONF", value = "--", isActive = false)
-                }
-            }
-
-            // Right section - Environmental data
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                if (sensorData != null) {
-                    HudDataBox(
-                        label = "TEMP",
-                        value = "${sensorData.temperature.toInt()}°C",
-                        isActive = true
-                    )
-                    HudDataBox(
-                        label = "HUM",
-                        value = "${sensorData.humidity.toInt()}%",
-                        isActive = true
-                    )
-                    HudDataBox(
-                        label = "W.SPD",
-                        value = "${sensorData.windSpeed.toInt()}m/s",
-                        isActive = true
-                    )
-                    HudDataBox(
-                        label = "W.DIR",
-                        value = "${sensorData.windDirection.toInt()}°",
-                        isActive = true
-                    )
-                    HudDataBox(
-                        label = "RNG",
-                        value = "${sensorData.rangefinderDistance.toInt()}m",
-                        isActive = true
-                    )
-                } else {
-                    HudDataBox(label = "TEMP", value = "--", isActive = false)
-                    HudDataBox(label = "HUM", value = "--", isActive = false)
-                    HudDataBox(label = "W.SPD", value = "--", isActive = false)
-                    HudDataBox(label = "W.DIR", value = "--", isActive = false)
-                    HudDataBox(label = "RNG", value = "--", isActive = false)
-                }
-            }
-
-            // Far right section - Status indicators
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                ConnectionStatusCompact(systemStatus)
-
-                systemStatus.batteryLevel?.let { battery ->
-                    HudDataBox(
-                        label = "BAT",
-                        value = "$battery%",
-                        isActive = battery > 20
-                    )
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun HudDataBox(
-    label: String,
-    value: String,
-    isActive: Boolean,
-    textColor: Color? = null
-) {
-    Column(
-        horizontalAlignment = Alignment.CenterHorizontally,
-        modifier = Modifier
-            .background(
-                if (isActive) MilitaryAccentGreen.copy(alpha = 0.3f) else Color.Transparent,
-                RoundedCornerShape(4.dp)
-            )
-            .padding(horizontal = 6.dp, vertical = 2.dp)
+            .border(1.dp, t.line)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 10.dp, vertical = 4.dp),
     ) {
         Text(
             text = label,
-            color = MilitaryTextSecondary,
+            color = t.ink,
             fontSize = 9.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Normal
-        )
-        Text(
-            text = value,
-            color = textColor ?: if (isActive) MilitaryTextPrimary else MilitaryTextSecondary,
-            fontSize = 11.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold
+            letterSpacing = 0.18.em,
+            fontFamily = JetBrainsMono,
         )
     }
 }
 
+// ----------------------------------------------------------------------------
+// Target list rail (top-left)
+// ----------------------------------------------------------------------------
 @Composable
-private fun ConnectionStatusCompact(systemStatus: SystemStatus) {
-    val statusColor = when (systemStatus.connectionStatus) {
-        ConnectionState.CONNECTED -> StatusConnected
-        ConnectionState.CONNECTING -> StatusConnecting
-        ConnectionState.DISCONNECTED -> StatusDisconnected
-        ConnectionState.ERROR -> StatusError
-    }
-
-    val statusText = when (systemStatus.connectionStatus) {
-        ConnectionState.CONNECTED -> "CONN"
-        ConnectionState.CONNECTING -> "..."
-        ConnectionState.DISCONNECTED -> "DISC"
-        ConnectionState.ERROR -> "ERR"
-    }
-
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(4.dp),
-        modifier = Modifier
-            .background(
-                statusColor.copy(alpha = 0.3f),
-                RoundedCornerShape(4.dp)
-            )
-            .padding(horizontal = 6.dp, vertical = 4.dp)
+private fun TargetListRail(
+    targets: List<DetectedTarget>,
+    selectedTargetId: String?,
+    modifier: Modifier = Modifier,
+) {
+    val t = LocalTactical.current
+    Column(
+        modifier = modifier
+            .widthIn(min = 200.dp)
+            .background(t.videoChrome)
+            .border(1.dp, t.lineHi)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
+        Lbl(text = "TARGETS · ${targets.size}")
+        Spacer(Modifier.height(4.dp))
+        if (targets.isEmpty()) {
+            Text(
+                text = "NO CONTACTS",
+                color = t.inkMute,
+                fontSize = 10.sp,
+                letterSpacing = 0.14.em,
+                fontFamily = JetBrainsMono,
+            )
+        } else {
+            targets.take(6).forEach { target ->
+                TargetRailRow(target = target, isLocked = target.id == selectedTargetId)
+            }
+            if (targets.size > 6) {
+                Text(
+                    text = "+ ${targets.size - 6} MORE",
+                    color = t.inkMute,
+                    fontSize = 9.sp,
+                    letterSpacing = 0.18.em,
+                    fontFamily = JetBrainsMono,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun TargetRailRow(target: DetectedTarget, isLocked: Boolean) {
+    val t = LocalTactical.current
+    Row(
+        modifier = Modifier
+            .drawBehind {
+                if (isLocked) {
+                    drawLine(
+                        color = t.accent,
+                        start = Offset(0f, 0f),
+                        end = Offset(0f, size.height),
+                        strokeWidth = 2.dp.toPx(),
+                    )
+                }
+            }
+            .padding(start = if (isLocked) 0.dp else 8.dp, top = 4.dp, bottom = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = target.id,
+            color = if (isLocked) t.accent else t.ink,
+            fontSize = 13.sp,
+            letterSpacing = 0.1.em,
+            fontFamily = JetBrainsMono,
+            modifier = Modifier.width(46.dp),
+        )
+        Text(
+            text = target.targetType.uppercase(),
+            color = t.inkDim,
+            fontSize = 10.sp,
+            letterSpacing = 0.12.em,
+            fontFamily = JetBrainsMono,
+            modifier = Modifier.width(80.dp),
+        )
+        Text(
+            text = "${(target.confidence * 100).toInt()}%",
+            color = t.ink,
+            fontSize = 11.sp,
+            fontFamily = JetBrainsMono,
+        )
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Firing solution card (top-right) — only shown when a target is locked
+// ----------------------------------------------------------------------------
+@Composable
+private fun FiringSolutionCard(
+    targetId: String,
+    solution: ShootingSolution,
+    rangefinder: Double?,
+    modifier: Modifier = Modifier,
+) {
+    val t = LocalTactical.current
+    Column(
+        modifier = modifier
+            .background(t.videoChrome)
+            .border(1.dp, t.lineHi),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .drawBehind {
+                    drawLine(
+                        color = t.line,
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                }
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Lbl(text = "FIRING SOLUTION · $targetId")
+            Chip(text = "LOCKED", tone = ChipTone.Warn)
+        }
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Stat(
+                    label = "Azimuth",
+                    value = "${solution.azimuth.toInt()}°",
+                    modifier = Modifier.weight(1f),
+                )
+                Stat(
+                    label = "Elevation",
+                    value = "${if (solution.elevation >= 0) "+" else ""}${solution.elevation.toInt()}°",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Stat(
+                    label = "Windage",
+                    value = String.format("%.1f", solution.windageAdjustment),
+                    unit = "MIL",
+                    modifier = Modifier.weight(1f),
+                )
+                Stat(
+                    label = "Drop",
+                    value = String.format("%.1f", solution.elevationAdjustment),
+                    unit = "MIL",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Stat(
+                    label = "Range",
+                    value = rangefinder?.toInt()?.toString() ?: "—",
+                    unit = "m",
+                    modifier = Modifier.weight(1f),
+                )
+                Stat(
+                    label = "Confidence",
+                    value = "${(solution.confidence * 100).toInt()}%",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Sensor strip (bottom) — 8 cells + UNLOCK
+// ----------------------------------------------------------------------------
+@Composable
+private fun SensorStrip(
+    sensorData: SensorData?,
+    hasLockedTarget: Boolean,
+    onUnlock: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val t = LocalTactical.current
+    // FIXED height: without this, cells using fillMaxHeight() inside a
+    // BottomStart-aligned Box-child would expand to the Box's full height
+    // (the whole video region) — which is exactly what the user reported.
+    Row(
+        modifier = modifier
+            .height(68.dp)
+            .background(t.panel)
+            .drawBehind {
+                drawLine(
+                    color = t.line,
+                    start = Offset(0f, 0f),
+                    end = Offset(size.width, 0f),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            },
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        // Real values come from the ddl_frame nested structure via the helper
+        // extensions in data/models/SensorData.kt. Each helper returns null
+        // when its sub-frame is absent or its `valid` flag is false, which we
+        // render as "—".
+        SensorCell(
+            label = "T",
+            value = sensorData.temperatureC()?.let { "${it.toInt()}°C" } ?: "—",
+            modifier = Modifier.weight(1f),
+        )
+        SensorCell(
+            label = "HUM",
+            value = sensorData.humidityPct()?.let { "${it.toInt()}%" } ?: "—",
+            modifier = Modifier.weight(1f),
+        )
+        // WIND and DIR are placeholders — the Pi has no anemometer yet. The
+        // cells are kept so the bottom strip still feels deliberate, and
+        // they'll start populating automatically once a WindFrame is added.
+        SensorCell(label = "WIND", value = "—", modifier = Modifier.weight(1f))
+        SensorCell(label = "DIR",  value = "—", modifier = Modifier.weight(1f))
+        // GPS — lat, lon, and (when valid) satellite count packed into one cell.
+        SensorCell(
+            label = "GPS",
+            value = sensorData.gpsLatLon()?.let { (lat, lon) ->
+                val sats = sensorData.gpsSatellites()
+                if (sats != null) String.format("%.3f, %.3f · %d SAT", lat, lon, sats)
+                else              String.format("%.3f, %.3f", lat, lon)
+            } ?: "—",
+            modifier = Modifier.weight(1.6f),
+        )
+        SensorCell(
+            label = "LSR",
+            value = sensorData.distanceM()?.let { "${it.toInt()}m" } ?: "—",
+            modifier = Modifier.weight(1f),
+            hideRightBorder = true,
+        )
+        // UNLOCK action (only enabled if there's something to unlock)
         Box(
             modifier = Modifier
-                .size(6.dp)
-                .background(statusColor, androidx.compose.foundation.shape.CircleShape)
-        )
-        Text(
-            text = statusText,
-            color = MilitaryTextPrimary,
-            fontSize = 9.sp,
-            fontFamily = FontFamily.Monospace,
-            fontWeight = FontWeight.Bold
-        )
+                .background(t.panelHi)
+                .drawBehind {
+                    drawLine(
+                        color = t.lineHi,
+                        start = Offset(0f, 0f),
+                        end = Offset(0f, size.height),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                }
+                .clickable(enabled = hasLockedTarget, onClick = onUnlock)
+                .padding(horizontal = 28.dp, vertical = 14.dp),
+        ) {
+            Text(
+                text = "UNLOCK",
+                color = if (hasLockedTarget) t.ink else t.inkMute,
+                fontSize = 11.sp,
+                letterSpacing = 0.2.em,
+                fontFamily = JetBrainsMono,
+            )
+        }
     }
 }
 
 @Composable
-private fun VideoFeedSection(
-    detectedTargets: List<DetectedTarget>,
-    shootingSolution: ShootingSolution?,
-    selectedTargetId: String?,
-    systemStatus: SystemStatus,
-    streamReady: Boolean,
-    rtspStreamUrl: String?,
-    onTargetSelect: (String) -> Unit,
-    onTargetLockToggle: (String, Boolean) -> Unit,
-    modifier: Modifier = Modifier
+private fun SensorCell(
+    label: String,
+    value: String,
+    modifier: Modifier = Modifier,
+    hideRightBorder: Boolean = false,
 ) {
-    TacticalVideoPlayer(
-        detectedTargets = detectedTargets,
-        shootingSolution = shootingSolution,
-        selectedTargetId = selectedTargetId,
-        connectionState = systemStatus.connectionStatus,
-        streamReady = streamReady,
-        videoStreamUrl = rtspStreamUrl,
-        onTargetClick = { target ->
-            Log.d("Dashboard", "Target clicked: ${target.id}")
-        },
-        onTargetSelect = onTargetSelect,
-        onTargetLockToggle = onTargetLockToggle,
-        modifier = modifier,
-    )
+    val t = LocalTactical.current
+    Column(
+        modifier = modifier
+            .fillMaxHeight()  // OK now — parent Row has a fixed 68dp height
+            .drawBehind {
+                if (!hideRightBorder) {
+                    drawLine(
+                        color = t.line,
+                        start = Offset(size.width, 0f),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                }
+            }
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalArrangement = Arrangement.Center,
+    ) {
+        Lbl(text = label)
+        Spacer(Modifier.height(4.dp))
+        Text(
+            text = value,
+            color = t.ink,
+            fontSize = 13.sp,
+            letterSpacing = 0.06.em,
+            fontFamily = JetBrainsMono,
+        )
+    }
 }

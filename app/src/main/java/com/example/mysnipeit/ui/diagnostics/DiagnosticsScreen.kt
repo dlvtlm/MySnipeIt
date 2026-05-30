@@ -1,17 +1,23 @@
 package com.example.mysnipeit.ui.diagnostics
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.material3.*
+import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
@@ -23,300 +29,470 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
 /**
- * Connection Diagnostics Screen
+ * Diagnostics screen — redesigned to Option A from the design bundle:
+ * left rail nav + CONNECTIVITY TEST panel with PING + PORT SCAN cards.
  *
- * Use this to test connectivity to your Raspberry Pi before full integration
- * Helps identify network issues early
+ * The [DiagnosticsViewModel] underneath is unchanged — same NetworkTester
+ * calls, same DiagnosticsState data model, same TestStatus enum. Only the
+ * UI was rewritten.
  */
-
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DiagnosticsScreen(
     onBackClick: () -> Unit,
-    viewModel: DiagnosticsViewModel = viewModel()
+    isDarkTheme: Boolean = true,
+    onToggleTheme: () -> Unit = {},
+    viewModel: DiagnosticsViewModel = viewModel(),
 ) {
-    val diagnosticsState by viewModel.diagnosticsState.collectAsState()
+    val t = LocalTactical.current
+    val state by viewModel.diagnosticsState.collectAsState()
     val scope = rememberCoroutineScope()
 
-    Scaffold(
-        topBar = {
-            TopAppBar(
-                title = {
-                    Text(
-                        "CONNECTION DIAGNOSTICS",
-                        color = MilitaryTextPrimary,
-                        fontFamily = FontFamily.Monospace
-                    )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBackClick) {
-                        Text(
-                            text = "←",
-                            fontSize = 24.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MilitaryTextPrimary
-                        )
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MilitaryCardBackground
-                )
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(t.base),
+    ) {
+        TopBar(
+            device = "DIAGNOSTICS",
+            onBackClick = onBackClick,
+        ) {
+            ThemeToggle(isDark = isDarkTheme, onToggle = onToggleTheme)
+        }
+        Row(modifier = Modifier.fillMaxSize()) {
+            DiagSidebar()
+            DiagMainPane(
+                state = state,
+                onIpChange = viewModel::updateIpAddress,
+                onRunAll = { scope.launch { viewModel.runFullDiagnostics() } },
+                onQuickPing = { scope.launch { viewModel.quickPingTest() } },
             )
         }
-    ) { padding ->
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(MilitaryDarkBackground)
-                .padding(padding)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(24.dp)
-                    .verticalScroll(rememberScrollState())
-            ) {
-                // IP Address Input
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = MilitaryCardBackground
-                    ),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Column(
-                        modifier = Modifier.padding(16.dp)
-                    ) {
-                        Text(
-                            text = "RASPBERRY PI IP ADDRESS",
-                            fontSize = 14.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = MilitaryTextPrimary,
-                            fontFamily = FontFamily.Monospace
-                        )
+    }
+}
 
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        OutlinedTextField(
-                            value = diagnosticsState.ipAddress,
-                            onValueChange = { viewModel.updateIpAddress(it) },
-                            placeholder = { Text("10.42.1.1") },
-                            modifier = Modifier.fillMaxWidth(),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedTextColor = MilitaryTextPrimary,
-                                unfocusedTextColor = MilitaryTextPrimary,
-                                focusedBorderColor = MilitaryAccentGreen,
-                                unfocusedBorderColor = MilitaryBorderColor
-                            ),
-                            singleLine = true
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(16.dp))
-
-                // Test Buttons
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                viewModel.runFullDiagnostics()
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MilitaryAccentGreen
-                        ),
-                        enabled = !diagnosticsState.isRunning
-                    ) {
-                        Text(
-                            text = if (diagnosticsState.isRunning) "TESTING..." else "RUN FULL TEST",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.Black
-                        )
-                    }
-
-                    Button(
-                        onClick = {
-                            scope.launch {
-                                viewModel.quickPingTest()
-                            }
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MilitaryBorderColor
-                        ),
-                        enabled = !diagnosticsState.isRunning
-                    ) {
-                        Text(
-                            text = "QUICK PING",
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            color = MilitaryTextPrimary
-                        )
-                    }
-                }
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Test Results
-                Text(
-                    text = "TEST RESULTS",
-                    fontSize = 16.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MilitaryTextPrimary,
-                    fontFamily = FontFamily.Monospace
+// ----------------------------------------------------------------------------
+// Sidebar
+//
+// LOGS removed (the app has no log screen). MOCK MODE and TELEMETRY are kept
+// as placeholders for future features but rendered as DISABLED — they don't
+// pretend to be clickable. The BACK button used to live at the bottom of
+// this sidebar; it now lives in the TopBar for cross-screen consistency.
+// ----------------------------------------------------------------------------
+@Composable
+private fun DiagSidebar() {
+    val t = LocalTactical.current
+    Column(
+        modifier = Modifier
+            .width(220.dp)
+            .fillMaxHeight()
+            .background(t.panel)
+            .drawBehind {
+                drawLine(
+                    color = t.line,
+                    start = Offset(size.width, 0f),
+                    end = Offset(size.width, size.height),
+                    strokeWidth = 1.dp.toPx(),
                 )
-
-                Spacer(modifier = Modifier.height(12.dp))
-
-                // Ping Test Result
-                TestResultCard(
-                    title = "PING TEST",
-                    status = diagnosticsState.pingStatus,
-                    message = diagnosticsState.pingMessage
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // WebSocket Port Test
-                TestResultCard(
-                    title = "WEBSOCKET PORT (8555)",
-                    status = diagnosticsState.websocketStatus,
-                    message = diagnosticsState.websocketMessage
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // HTTP Port Test
-                TestResultCard(
-                    title = "HTTP API PORT (8000)",
-                    status = diagnosticsState.httpStatus,
-                    message = diagnosticsState.httpMessage
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Video Port Test
-                TestResultCard(
-                    title = "VIDEO STREAM PORT (8554)",
-                    status = diagnosticsState.videoStatus,
-                    message = diagnosticsState.videoMessage
-                )
-
-                Spacer(modifier = Modifier.height(24.dp))
-
-                // Recommendations
-                if (diagnosticsState.recommendations.isNotEmpty()) {
-                    Card(
-                        colors = CardDefaults.cardColors(
-                            containerColor = MilitaryWarningAmber.copy(alpha = 0.1f)
-                        ),
-                        border = androidx.compose.foundation.BorderStroke(1.dp, MilitaryWarningAmber)
-                    ) {
-                        Column(
-                            modifier = Modifier.padding(16.dp)
-                        ) {
-                            Text(
-                                text = "RECOMMENDATIONS",
-                                fontSize = 14.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = MilitaryWarningAmber,
-                                fontFamily = FontFamily.Monospace
-                            )
-
-                            Spacer(modifier = Modifier.height(8.dp))
-
-                            diagnosticsState.recommendations.forEach { recommendation ->
-                                Text(
-                                    text = "• $recommendation",
-                                    fontSize = 12.sp,
-                                    color = MilitaryTextPrimary,
-                                    fontFamily = FontFamily.Monospace,
-                                    modifier = Modifier.padding(vertical = 4.dp)
-                                )
-                            }
-                        }
-                    }
-                }
             }
-        }
+            .padding(24.dp),
+    ) {
+        Lbl(text = "DIAGNOSTICS")
+        Spacer(Modifier.height(16.dp))
+        DiagNavItem(label = "CONNECTIVITY", active = true,  disabled = false)
+        Spacer(Modifier.height(4.dp))
+        DiagNavItem(label = "MOCK MODE",    active = false, disabled = true)
+        Spacer(Modifier.height(4.dp))
+        DiagNavItem(label = "TELEMETRY",    active = false, disabled = true)
     }
 }
 
 @Composable
-private fun TestResultCard(
-    title: String,
-    status: TestStatus,
-    message: String
-) {
-    val (statusColor, statusText) = when (status) {
-        TestStatus.PENDING -> Pair(MilitaryTextSecondary, "PENDING")
-        TestStatus.RUNNING -> Pair(StatusConnecting, "TESTING...")
-        TestStatus.SUCCESS -> Pair(StatusConnected, "SUCCESS")
-        TestStatus.FAILED -> Pair(StatusError, "FAILED")
-    }
-
-    Card(
-        colors = CardDefaults.cardColors(
-            containerColor = MilitaryCardBackground
-        ),
-        border = androidx.compose.foundation.BorderStroke(
-            1.dp,
-            when (status) {
-                TestStatus.SUCCESS -> StatusConnected
-                TestStatus.FAILED -> StatusError
-                else -> MilitaryBorderColor
-            }
-        )
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(16.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = title,
-                    fontSize = 12.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = MilitaryTextPrimary,
-                    fontFamily = FontFamily.Monospace
-                )
-
-                if (message.isNotEmpty()) {
-                    Text(
-                        text = message,
-                        fontSize = 10.sp,
-                        color = MilitaryTextSecondary,
-                        fontFamily = FontFamily.Monospace
+private fun DiagNavItem(label: String, active: Boolean, disabled: Boolean) {
+    val t = LocalTactical.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (active) t.panelHi else Color.Transparent)
+            .drawBehind {
+                if (active) {
+                    drawLine(
+                        color = t.accent,
+                        start = Offset(0f, 0f),
+                        end = Offset(0f, size.height),
+                        strokeWidth = 2.dp.toPx(),
                     )
                 }
             }
+            .padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Text(
+            text = label,
+            color = when {
+                active -> t.ink
+                disabled -> t.inkMute
+                else -> t.inkDim
+            },
+            fontSize = 11.sp,
+            letterSpacing = 0.14.em,
+            fontFamily = JetBrainsMono,
+        )
+        if (disabled) {
+            Text(
+                text = "SOON",
+                color = t.inkMute,
+                fontSize = 8.sp,
+                letterSpacing = 0.2.em,
+                fontFamily = JetBrainsMono,
+            )
+        }
+    }
+}
 
-            Surface(
-                color = statusColor.copy(alpha = 0.2f),
-                shape = MaterialTheme.shapes.small
+// ----------------------------------------------------------------------------
+// Main pane
+// ----------------------------------------------------------------------------
+@Composable
+private fun DiagMainPane(
+    state: DiagnosticsState,
+    onIpChange: (String) -> Unit,
+    onRunAll: () -> Unit,
+    onQuickPing: () -> Unit,
+) {
+    val t = LocalTactical.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 28.dp, vertical = 24.dp)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        // Header row
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column {
+                Lbl(text = "NODE TARGET · ${state.ipAddress.ifBlank { "—" }}")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "CONNECTIVITY TEST",
+                    color = t.ink,
+                    fontSize = 22.sp,
+                    letterSpacing = 0.06.em,
+                    fontFamily = JetBrainsMono,
+                )
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MonoButton(
+                    label = if (state.isRunning) "TESTING…" else "RUN ALL",
+                    primary = true,
+                    enabled = !state.isRunning,
+                    onClick = onRunAll,
+                )
+                MonoButton(
+                    label = "QUICK PING",
+                    primary = false,
+                    enabled = !state.isRunning,
+                    onClick = onQuickPing,
+                )
+            }
+        }
+        Spacer(Modifier.height(20.dp))
+
+        // IP address input
+        IpAddressField(value = state.ipAddress, onChange = onIpChange)
+        Spacer(Modifier.height(16.dp))
+
+        // PING card
+        PingCard(state = state)
+        Spacer(Modifier.height(16.dp))
+
+        // PORT SCAN card
+        PortScanCard(state = state)
+
+        // Recommendations
+        if (state.recommendations.isNotEmpty()) {
+            Spacer(Modifier.height(16.dp))
+            RecommendationsCard(recommendations = state.recommendations)
+        }
+
+        Spacer(Modifier.height(20.dp))
+        Text(
+            text = "FALLBACK MOCK READY · TAP RUN ALL TO RE-TEST",
+            color = t.inkMute,
+            fontSize = 10.sp,
+            letterSpacing = 0.14.em,
+            fontFamily = JetBrainsMono,
+        )
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Mono button (small, two variants)
+// ----------------------------------------------------------------------------
+@Composable
+private fun MonoButton(
+    label: String,
+    primary: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val t = LocalTactical.current
+    Box(
+        modifier = Modifier
+            .background(if (primary && enabled) t.panelHi else Color.Transparent)
+            .border(
+                width = 1.dp,
+                color = if (primary) t.lineHi else t.line,
+            )
+            .clickable(enabled = enabled, onClick = onClick)
+            .padding(horizontal = 20.dp, vertical = 10.dp),
+    ) {
+        Text(
+            text = label,
+            color = if (enabled) t.ink else t.inkMute,
+            fontSize = 11.sp,
+            letterSpacing = 0.18.em,
+            fontFamily = JetBrainsMono,
+        )
+    }
+}
+
+// ----------------------------------------------------------------------------
+// IP address input
+// ----------------------------------------------------------------------------
+@Composable
+private fun IpAddressField(value: String, onChange: (String) -> Unit) {
+    val t = LocalTactical.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(t.panel)
+            .border(1.dp, t.line)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+    ) {
+        Lbl(text = "RASPBERRY PI IP ADDRESS")
+        Spacer(Modifier.height(8.dp))
+        BasicTextField(
+            value = value,
+            onValueChange = onChange,
+            singleLine = true,
+            textStyle = TextStyle(
+                color = t.ink,
+                fontSize = 14.sp,
+                letterSpacing = 0.08.em,
+                fontFamily = JetBrainsMono,
+            ),
+            cursorBrush = SolidColor(t.accent),
+            modifier = Modifier
+                .fillMaxWidth()
+                .drawBehind {
+                    drawLine(
+                        color = t.line,
+                        start = Offset(0f, size.height),
+                        end = Offset(size.width, size.height),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                }
+                .padding(vertical = 6.dp),
+            decorationBox = { inner ->
+                if (value.isEmpty()) {
+                    Text(
+                        text = "10.42.1.1",
+                        color = t.inkMute,
+                        fontSize = 14.sp,
+                        fontFamily = JetBrainsMono,
+                    )
+                }
+                inner()
+            },
+        )
+    }
+}
+
+// ----------------------------------------------------------------------------
+// PING card
+// ----------------------------------------------------------------------------
+@Composable
+private fun PingCard(state: DiagnosticsState) {
+    val t = LocalTactical.current
+    val (chipText, chipTone) = state.pingStatus.toChip()
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(t.panel)
+            .border(1.dp, t.line)
+            .padding(20.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Lbl(text = "ICMP REACHABILITY · ${state.ipAddress.ifBlank { "—" }}")
+            Chip(text = chipText, tone = chipTone)
+        }
+        Spacer(Modifier.height(14.dp))
+        Text(
+            text = if (state.pingMessage.isBlank()) "Awaiting test run." else state.pingMessage.uppercase(),
+            color = when (state.pingStatus) {
+                TestStatus.SUCCESS -> t.on
+                TestStatus.FAILED  -> t.danger
+                TestStatus.RUNNING -> t.accent
+                TestStatus.PENDING -> t.inkDim
+            },
+            fontSize = 12.sp,
+            letterSpacing = 0.1.em,
+            fontFamily = JetBrainsMono,
+        )
+    }
+}
+
+// ----------------------------------------------------------------------------
+// PORT SCAN card
+// ----------------------------------------------------------------------------
+@Composable
+private fun PortScanCard(state: DiagnosticsState) {
+    val t = LocalTactical.current
+    val rows = listOf(
+        PortRow(port = 8555, proto = "WEBSOCKET", status = state.websocketStatus),
+        PortRow(port = 8000, proto = "HTTP API",  status = state.httpStatus),
+        PortRow(port = 8554, proto = "RTSP",      status = state.videoStatus),
+    )
+    val openCount = rows.count { it.status == TestStatus.SUCCESS }
+    val totalCount = rows.size
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(t.panel)
+            .border(1.dp, t.line)
+            .padding(20.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Lbl(text = "PORT SCAN")
+            val portChipTone = when {
+                openCount == totalCount -> ChipTone.On
+                openCount > 0 -> ChipTone.Warn
+                else -> ChipTone.Danger
+            }
+            Chip(text = "$openCount/$totalCount OPEN", tone = portChipTone)
+        }
+        Spacer(Modifier.height(14.dp))
+        rows.forEachIndexed { idx, row ->
+            PortRowView(row = row, isFirst = idx == 0)
+        }
+    }
+}
+
+private data class PortRow(val port: Int, val proto: String, val status: TestStatus)
+
+@Composable
+private fun PortRowView(row: PortRow, isFirst: Boolean) {
+    val t = LocalTactical.current
+    val (statusText, tone) = row.status.toChip()
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                if (!isFirst) {
+                    drawLine(
+                        color = t.line,
+                        start = Offset(0f, 0f),
+                        end = Offset(size.width, 0f),
+                        strokeWidth = 1.dp.toPx(),
+                    )
+                }
+            }
+            .padding(vertical = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = ":${row.port}",
+            color = t.ink,
+            fontSize = 13.sp,
+            fontFamily = JetBrainsMono,
+            modifier = Modifier.width(90.dp),
+        )
+        Text(
+            text = row.proto,
+            color = t.inkDim,
+            fontSize = 12.sp,
+            letterSpacing = 0.1.em,
+            fontFamily = JetBrainsMono,
+            modifier = Modifier.weight(1f),
+        )
+        Text(
+            text = "TCP",
+            color = t.inkDim,
+            fontSize = 10.sp,
+            letterSpacing = 0.14.em,
+            fontFamily = JetBrainsMono,
+            modifier = Modifier.padding(end = 20.dp),
+        )
+        Chip(text = statusText, tone = tone)
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Recommendations card
+// ----------------------------------------------------------------------------
+@Composable
+private fun RecommendationsCard(recommendations: List<String>) {
+    val t = LocalTactical.current
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(t.panel)
+            .border(1.dp, t.accentDim)
+            .padding(20.dp),
+    ) {
+        Lbl(text = "RECOMMENDATIONS", color = t.accent)
+        Spacer(Modifier.height(10.dp))
+        recommendations.forEach { rec ->
+            Row(
+                modifier = Modifier.padding(vertical = 3.dp),
             ) {
                 Text(
-                    text = statusText,
-                    fontSize = 10.sp,
-                    fontWeight = FontWeight.Bold,
-                    color = statusColor,
-                    fontFamily = FontFamily.Monospace,
-                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    text = "•",
+                    color = t.accent,
+                    fontSize = 12.sp,
+                    fontFamily = JetBrainsMono,
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = rec,
+                    color = t.ink,
+                    fontSize = 12.sp,
+                    fontFamily = JetBrainsMono,
                 )
             }
         }
     }
 }
 
-// ViewModel for diagnostics
+// ----------------------------------------------------------------------------
+// TestStatus → chip mapping
+// ----------------------------------------------------------------------------
+private fun TestStatus.toChip(): Pair<String, ChipTone> = when (this) {
+    TestStatus.PENDING -> "PENDING"  to ChipTone.Dim
+    TestStatus.RUNNING -> "TESTING…" to ChipTone.Warn
+    TestStatus.SUCCESS -> "OPEN"     to ChipTone.On
+    TestStatus.FAILED  -> "CLOSED"   to ChipTone.Danger
+}
+
+// ============================================================================
+// ViewModel + State — UNCHANGED behaviour from previous version. The IP
+// address, the NetworkTester calls, the recommendations logic — all
+// identical. Only the UI above was rewritten.
+// ============================================================================
+
 class DiagnosticsViewModel : ViewModel() {
     private val _diagnosticsState = MutableStateFlow(DiagnosticsState())
     val diagnosticsState: StateFlow<DiagnosticsState> = _diagnosticsState.asStateFlow()
@@ -365,20 +541,15 @@ class DiagnosticsViewModel : ViewModel() {
         )
 
         if (!pingResult) {
-            recommendations.add("Check if both devices are on the same WiFi network")
-            recommendations.add("Verify the IP address is correct")
-            recommendations.add("Check if Raspberry Pi is powered on")
+            recommendations.add("Check that the tablet is joined to the RPi5 access point (MyHotspot).")
+            recommendations.add("Verify the IP address is correct (default: 10.42.1.1).")
+            recommendations.add("Check that the Raspberry Pi is powered on and streaming_server is running.")
         }
 
         // Test 2-4: Port scans (only if ping succeeds)
         if (pingResult) {
-            val ports = mapOf(
-                8555 to "websocketStatus",
-                8000 to "httpStatus",
-                8554 to "videoStatus"
-            )
-
-            val portResults = networkTester.scanPorts(ip, ports.keys.toList())
+            val ports = listOf(8555, 8000, 8554)
+            val portResults = networkTester.scanPorts(ip, ports)
 
             // WebSocket (8555)
             val wsResult = portResults[8555] ?: false
@@ -401,13 +572,11 @@ class DiagnosticsViewModel : ViewModel() {
                 videoMessage = if (videoResult) "Video stream available" else "Video stream not available"
             )
 
-            // Add recommendations based on results
-            if (!wsResult) recommendations.add("Start WebSocket server on Raspberry Pi (port 8555)")
-            if (!httpResult) recommendations.add("Start HTTP API server on Raspberry Pi (port 8000)")
-            if (!videoResult) recommendations.add("Start video streaming server on Raspberry Pi (port 8554)")
-
+            if (!wsResult) recommendations.add("Start streaming_server on the Pi (port 8555 must be listening).")
+            if (!httpResult) recommendations.add("Start the HTTP API server on the Pi (port 8000).")
+            if (!videoResult) recommendations.add("Start mediamtx on the Pi (port 8554 must be listening).")
             if (wsResult && httpResult && videoResult) {
-                recommendations.add("All systems operational! Ready to connect.")
+                recommendations.add("All systems operational. Ready to connect.")
             }
         }
 
@@ -429,7 +598,7 @@ data class DiagnosticsState(
     val httpMessage: String = "",
     val videoStatus: TestStatus = TestStatus.PENDING,
     val videoMessage: String = "",
-    val recommendations: List<String> = emptyList()
+    val recommendations: List<String> = emptyList(),
 )
 
 enum class TestStatus {
