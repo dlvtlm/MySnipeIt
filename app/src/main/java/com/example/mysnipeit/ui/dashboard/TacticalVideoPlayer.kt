@@ -352,10 +352,15 @@ private fun EnhancedTargetMarker(
     // Bone for tracked targets, copper for the selected/locked target.
     // No saturated greens or cyans (the redesign brief).
     val palette = LocalTactical.current
+    // High-visibility bbox colors over the live camera feed:
+    //   regular tracking → bright orange
+    //   locked target    → vivid red (high-alert)
+    // Values are identical in light + dark modes because the video region is
+    // always dark (real camera feed); contrast is against the video, not the
+    // surrounding UI.
     val markerColor = when {
-        isSelected -> palette.accent     // copper — selected (with shooting solution)
-        isLocked   -> palette.accent     // copper — locked
-        else       -> palette.ink        // bone for everything else
+        isLocked -> palette.bboxLocked
+        else     -> palette.bboxTracked
     }
 
     var pulseAlpha by remember { mutableStateOf(1f) }

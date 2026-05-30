@@ -19,6 +19,11 @@ import com.example.mysnipeit.data.models.DetectedTarget
 import com.example.mysnipeit.data.models.SensorData
 import com.example.mysnipeit.data.models.ShootingSolution
 import com.example.mysnipeit.data.models.SystemStatus
+import com.example.mysnipeit.data.models.distanceM
+import com.example.mysnipeit.data.models.gpsLatLon
+import com.example.mysnipeit.data.models.gpsSatellites
+import com.example.mysnipeit.data.models.humidityPct
+import com.example.mysnipeit.data.models.temperatureC
 import com.example.mysnipeit.ui.theme.*
 
 /**
@@ -365,22 +370,38 @@ private fun SensorStrip(
             },
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SensorCell(label = "T",    value = sensorData?.temperature?.let { "${it.toInt()}°C" } ?: "—", modifier = Modifier.weight(1f))
-        SensorCell(label = "HUM",  value = sensorData?.humidity?.let { "${it.toInt()}%" } ?: "—",     modifier = Modifier.weight(1f))
-        // BAR (barometric pressure) — the app's SensorData doesn't include it
-        SensorCell(label = "BAR",  value = "—", modifier = Modifier.weight(1f))
-        SensorCell(label = "WIND", value = sensorData?.windSpeed?.let { String.format("%.1f m/s", it) } ?: "—", modifier = Modifier.weight(1f))
-        SensorCell(label = "DIR",  value = sensorData?.windDirection?.let { "${it.toInt()}°" } ?: "—", modifier = Modifier.weight(1f))
-        // LUX (ambient light) — the app's SensorData doesn't include it
-        SensorCell(label = "LUX",  value = "—", modifier = Modifier.weight(1f))
+        // Real values come from the ddl_frame nested structure via the helper
+        // extensions in data/models/SensorData.kt. Each helper returns null
+        // when its sub-frame is absent or its `valid` flag is false, which we
+        // render as "—".
+        SensorCell(
+            label = "T",
+            value = sensorData.temperatureC()?.let { "${it.toInt()}°C" } ?: "—",
+            modifier = Modifier.weight(1f),
+        )
+        SensorCell(
+            label = "HUM",
+            value = sensorData.humidityPct()?.let { "${it.toInt()}%" } ?: "—",
+            modifier = Modifier.weight(1f),
+        )
+        // WIND and DIR are placeholders — the Pi has no anemometer yet. The
+        // cells are kept so the bottom strip still feels deliberate, and
+        // they'll start populating automatically once a WindFrame is added.
+        SensorCell(label = "WIND", value = "—", modifier = Modifier.weight(1f))
+        SensorCell(label = "DIR",  value = "—", modifier = Modifier.weight(1f))
+        // GPS — lat, lon, and (when valid) satellite count packed into one cell.
         SensorCell(
             label = "GPS",
-            value = sensorData?.let { String.format("%.3f,%.3f", it.gpsLatitude, it.gpsLongitude) } ?: "—",
-            modifier = Modifier.weight(1.4f),
+            value = sensorData.gpsLatLon()?.let { (lat, lon) ->
+                val sats = sensorData.gpsSatellites()
+                if (sats != null) String.format("%.3f, %.3f · %d SAT", lat, lon, sats)
+                else              String.format("%.3f, %.3f", lat, lon)
+            } ?: "—",
+            modifier = Modifier.weight(1.6f),
         )
         SensorCell(
             label = "LSR",
-            value = sensorData?.rangefinderDistance?.let { "${it.toInt()}m" } ?: "—",
+            value = sensorData.distanceM()?.let { "${it.toInt()}m" } ?: "—",
             modifier = Modifier.weight(1f),
             hideRightBorder = true,
         )

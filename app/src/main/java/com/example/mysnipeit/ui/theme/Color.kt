@@ -27,6 +27,8 @@ data class TacticalPalette(
     val accentDim: Color,    // dimmed accent
     val on: Color,           // muted olive — OK / connected
     val danger: Color,       // muted red
+    val bboxTracked: Color,  // orange — tracked/unlocked bbox on the video
+    val bboxLocked: Color,   // red — locked-target bbox on the video
     val videoChrome: Color,  // semi-transparent panel for HUD overlays on video
 )
 
@@ -47,6 +49,11 @@ val TacticalDark = TacticalPalette(
     accentDim   = Color(0xFF6A4A28),
     on          = Color(0xFF9AAE72),
     danger      = Color(0xFFC47668),
+    // Bbox colors are always rendered over the live video (which is always dark
+    // — real camera feed). Same hex values in both palettes so they read the
+    // same regardless of UI mode.
+    bboxTracked = Color(0xFFFF8C2D),  // bright orange — visible, distinct from copper accent
+    bboxLocked  = Color(0xFFE6312E),  // vivid red — high alert, clearly different from orange
     videoChrome = Color(0xE015181A),  // rgba(21,24,26,0.88)
 )
 
@@ -67,6 +74,10 @@ val TacticalLight = TacticalPalette(
     accentDim   = Color(0xFF8A5A28),
     on          = Color(0xFF2E3A18),
     danger      = Color(0xFF6A1F18),
+    // Same bbox colors as dark mode — they sit on top of the live video which
+    // is always dark, so the contrast target is the camera feed, not the UI.
+    bboxTracked = Color(0xFFFF8C2D),
+    bboxLocked  = Color(0xFFE6312E),
     videoChrome = Color(0xEBBDB6A0),  // rgba(189,182,160,0.92)
 )
 
