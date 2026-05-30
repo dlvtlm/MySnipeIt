@@ -665,4 +665,3 @@ private fun VideoStatusOverlay(modifier: Modifier = Modifier) {
         )
     }
 }
-}

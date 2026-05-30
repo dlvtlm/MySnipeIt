@@ -128,7 +128,7 @@ fun DashboardScreen(
                 FiringSolutionCard(
                     targetId = lockedTarget.id,
                     solution = shootingSolution,
-                    rangefinder = sensorData?.rangefinderDistance,
+                    rangefinder = sensorData.distanceM()?.toDouble(),
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(16.dp)
