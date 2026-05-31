@@ -35,10 +35,21 @@ class RaspberryPiClient {
         // "1" can swap between two people frame-to-frame).
         // - IOU_MATCH_THRESHOLD: minimum overlap to consider an incoming bbox
         //   the "same" target as an already-tracked one.
+        // - CENTER_DISTANCE_FALLBACK_PX: when IoU < threshold (e.g. a fast
+        //   mover with mostly-disjoint bboxes between consecutive detections),
+        //   we fall back to matching by center-point distance. 480px ≈ 25% of
+        //   the 1920px source frame — wide enough to track a person across
+        //   ~1.6s gaps at 0.6 fps without falsely merging two people standing
+        //   apart in the frame.
         // - TRACKED_TARGET_TIMEOUT_MS: how long a tracked target is kept alive
-        //   without a fresh match (replaces the old grace-period mechanism).
+        //   without a fresh match. Tuned to 2500ms for the demo because the
+        //   Pi's detector is currently CPU-only at ~0.6 fps (~1600ms between
+        //   detections). At the previous 600ms the bbox would flicker / die
+        //   between every Pi detection. Drop back toward ~300ms once the
+        //   EdgeTPU detector is back to its intended rate.
         private const val IOU_MATCH_THRESHOLD = 0.3f
-        private const val TRACKED_TARGET_TIMEOUT_MS = 600L
+        private const val CENTER_DISTANCE_FALLBACK_PX = 480f
+        private const val TRACKED_TARGET_TIMEOUT_MS = 2500L
 
         // EMA smoothing on matched bboxes. alpha = weight of the new sample.
         // Higher = more responsive, less smoothing. 0.7 keeps a noticeable
@@ -46,10 +57,11 @@ class RaspberryPiClient {
         private const val EMA_ALPHA = 0.7f
 
         // Stale detection auto-clear — drop bboxes if Pi stops sending them.
-        // Tuned to 5s so brief silences between bursty Pi deliveries don't
-        // wipe the overlay; still short enough to clear if the detector dies.
+        // 8s (was 5s) gives headroom for the slow CPU-only detector to
+        // occasionally stall without us wiping the overlay; still short
+        // enough that a truly dead detector is acknowledged within seconds.
         private const val STALENESS_CHECK_INTERVAL_MS = 500L
-        private const val STALENESS_TIMEOUT_MS = 5000L
+        private const val STALENESS_TIMEOUT_MS = 8000L
 
         // WS keepalive — prevent NAT/router idle timeouts
         private const val KEEPALIVE_INTERVAL_MS = 20_000L
@@ -614,44 +626,88 @@ class RaspberryPiClient {
         )
 
     /**
-     * Match incoming raw detections against currently-tracked targets by IoU
-     * (greedy, highest-overlap first). Matched targets get EMA-smoothed
-     * positions and a refreshed lastSeenAt. Unmatched incoming detections
-     * become new tracked targets with a fresh visual id (T1, T2, ...).
-     * Tracked targets that haven't been matched within
-     * [TRACKED_TARGET_TIMEOUT_MS] are removed.
+     * Update a tracked target with a newly-matched incoming detection: blend
+     * bbox + confidence via EMA, refresh class label, refresh lastSeenAt.
+     * Used by both matcher stages so the update logic stays in one place.
+     */
+    private fun applyMatch(trackId: String, det: DetectedTarget, now: Long) {
+        val track = trackedTargets[trackId] ?: return
+        track.bbox       = smoothBbox(track.bbox, det.bbox)
+        track.confidence = EMA_ALPHA * det.confidence + (1f - EMA_ALPHA) * track.confidence
+        track.targetType = det.targetType
+        track.lastSeenAt = now
+    }
+
+    /** Euclidean distance between the center points of two bboxes (pixels). */
+    private fun centerDistance(a: BoundingBox, b: BoundingBox): Float {
+        val cax = a.x + a.width  / 2f
+        val cay = a.y + a.height / 2f
+        val cbx = b.x + b.width  / 2f
+        val cby = b.y + b.height / 2f
+        val dx = cax - cbx
+        val dy = cay - cby
+        return kotlin.math.sqrt(dx * dx + dy * dy)
+    }
+
+    /**
+     * Two-stage matcher.
      *
-     * Returned list = the current tracked-target snapshot, ready for UI.
+     * Stage 1 (precise): each tracked target greedily claims the
+     * highest-IoU incoming bbox above [IOU_MATCH_THRESHOLD].
+     *
+     * Stage 2 (fallback): among the targets that didn't find an IoU
+     * match, each greedily claims the *nearest remaining* incoming bbox
+     * by center-point distance, but only if that distance is within
+     * [CENTER_DISTANCE_FALLBACK_PX]. This rescues identity for fast
+     * movers whose bboxes barely overlap between consecutive detections
+     * — common at low Pi-side detection rates (e.g. 0.6 fps CPU
+     * fallback, ~1.6s gaps).
+     *
+     * Anything still unmatched after both stages becomes a new tracked
+     * target. Stale tracks (no match within [TRACKED_TARGET_TIMEOUT_MS])
+     * are then swept.
      */
     private fun matchAndSmooth(incoming: List<DetectedTarget>): List<DetectedTarget> {
         val now = System.currentTimeMillis()
 
-        // Build all candidate (trackedId, detectionIndex, IoU) pairs that meet
-        // the threshold, then assign greedily by descending IoU.
-        val candidates = mutableListOf<Triple<String, Int, Float>>()
+        val claimedTrackIds = HashSet<String>()
+        val claimedDetIdxs  = HashSet<Int>()
+
+        // ---- Stage 1: greedy IoU match ----
+        val iouCandidates = mutableListOf<Triple<String, Int, Float>>()
         for (track in trackedTargets.values) {
             for ((idx, det) in incoming.withIndex()) {
                 val iou = computeIoU(track.bbox, det.bbox)
                 if (iou >= IOU_MATCH_THRESHOLD) {
-                    candidates.add(Triple(track.visualId, idx, iou))
+                    iouCandidates.add(Triple(track.visualId, idx, iou))
                 }
             }
         }
-        candidates.sortByDescending { it.third }
-
-        val claimedTrackIds = HashSet<String>()
-        val claimedDetIdxs  = HashSet<Int>()
-
-        for ((trackId, detIdx, _) in candidates) {
+        iouCandidates.sortByDescending { it.third }
+        for ((trackId, detIdx, _) in iouCandidates) {
             if (trackId in claimedTrackIds || detIdx in claimedDetIdxs) continue
-            val track = trackedTargets[trackId] ?: continue
-            val det   = incoming[detIdx]
+            applyMatch(trackId, incoming[detIdx], now)
+            claimedTrackIds += trackId
+            claimedDetIdxs  += detIdx
+        }
 
-            track.bbox       = smoothBbox(track.bbox, det.bbox)
-            track.confidence = EMA_ALPHA * det.confidence + (1f - EMA_ALPHA) * track.confidence
-            track.targetType = det.targetType
-            track.lastSeenAt = now
-
+        // ---- Stage 2: center-distance fallback ----
+        // Only consider tracks/detections that didn't match by IoU.
+        val distCandidates = mutableListOf<Triple<String, Int, Float>>()
+        for (track in trackedTargets.values) {
+            if (track.visualId in claimedTrackIds) continue
+            for ((idx, det) in incoming.withIndex()) {
+                if (idx in claimedDetIdxs) continue
+                val d = centerDistance(track.bbox, det.bbox)
+                if (d <= CENTER_DISTANCE_FALLBACK_PX) {
+                    distCandidates.add(Triple(track.visualId, idx, d))
+                }
+            }
+        }
+        distCandidates.sortBy { it.third }  // nearest first
+        for ((trackId, detIdx, _) in distCandidates) {
+            if (trackId in claimedTrackIds || detIdx in claimedDetIdxs) continue
+            applyMatch(trackId, incoming[detIdx], now)
             claimedTrackIds += trackId
             claimedDetIdxs  += detIdx
         }
