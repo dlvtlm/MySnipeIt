@@ -1,8 +1,11 @@
 package com.example.mysnipeit
 
+import android.Manifest
+import android.content.pm.PackageManager
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
@@ -10,6 +13,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -21,17 +25,25 @@ import com.example.mysnipeit.ui.home.HomeScreen
 import com.example.mysnipeit.ui.device.DeviceSelectionScreen
 import com.example.mysnipeit.ui.map.MapScreen
 import com.example.mysnipeit.ui.dashboard.DashboardScreen
-import com.google.android.gms.maps.model.LatLng
 import android.util.Log
 import com.example.mysnipeit.ui.diagnostics.DiagnosticsScreen
 
 class MainActivity : ComponentActivity() {
     private val viewModel: SniperViewModel by viewModels()
 
+    // Runtime permission launcher for ACCESS_FINE_LOCATION. The actual
+    // GPS provider lives in SniperViewModel; we just gate its start() on
+    // permission grant here.
+    private val locationPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+            if (granted) viewModel.onLocationPermissionGranted()
+            else         viewModel.onLocationPermissionDenied()
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableImmersiveMode()
+        ensureLocationPermission()
         setContent {
             val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
             MySniperItTheme(darkTheme = darkTheme) {
@@ -42,6 +54,24 @@ class MainActivity : ComponentActivity() {
                     SniperApp(viewModel = viewModel)
                 }
             }
+        }
+    }
+
+    /**
+     * If the location permission is already granted, start the provider now.
+     * Otherwise launch the runtime request — the launcher's callback above
+     * will start it on grant. If the user denies, [userLocation] stays null
+     * forever and the map / future ballistics will degrade gracefully.
+     */
+    private fun ensureLocationPermission() {
+        val granted = ContextCompat.checkSelfPermission(
+            this, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+
+        if (granted) {
+            viewModel.onLocationPermissionGranted()
+        } else {
+            locationPermissionLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION)
         }
     }
 
@@ -78,9 +108,11 @@ fun SniperApp(viewModel: SniperViewModel) {
     val rtspStreamUrl by viewModel.rtspStreamUrl.collectAsState()
     val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
 
-
-    // User location (mock location for now - can be replaced with real GPS later)
-    val userLocation = remember { LatLng( 31.518209, 34.521274) }
+    // Real device GPS — null until the user grants the runtime permission
+    // and the FusedLocationProvider returns its first fix. Screens that
+    // accept it handle the null case (MapScreen hides the marker; future
+    // ballistics will use it directly as a calculator input).
+    val userLocation by viewModel.userLocation.collectAsStateWithLifecycle()
 
     // Track menu state
     var showMenu by remember { mutableStateOf(false) }

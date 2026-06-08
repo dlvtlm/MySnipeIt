@@ -3,9 +3,11 @@ package com.example.mysnipeit.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.mysnipeit.data.location.DeviceLocationProvider
 import com.example.mysnipeit.data.models.*
 import com.example.mysnipeit.data.network.WifiBinder
 import com.example.mysnipeit.data.repository.SniperRepository
+import com.google.android.gms.maps.model.LatLng
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -33,6 +35,26 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
         val next = !_darkTheme.value
         _darkTheme.value = next
         prefs.edit().putBoolean("dark_theme", next).apply()
+    }
+
+    // --- Device GPS --------------------------------------------------------
+    // Real device location, populated once the runtime location permission
+    // has been granted (see MainActivity). Null until then OR while we wait
+    // for the first fix. Used by:
+    //  - MapScreen for the "Your Location" marker
+    //  - (future) Ballistics calculator as one of its inputs
+    private val locationProvider = DeviceLocationProvider(application.applicationContext)
+    val userLocation: StateFlow<LatLng?> = locationProvider.location
+
+    /** Called by MainActivity after the user grants ACCESS_FINE_LOCATION. */
+    fun onLocationPermissionGranted() {
+        locationProvider.start()
+        Log.d("SniperViewModel", "Location permission granted — provider started")
+    }
+
+    /** Called by MainActivity if the user denies the permission. */
+    fun onLocationPermissionDenied() {
+        Log.w("SniperViewModel", "Location permission denied — userLocation will stay null")
     }
 
     // All 4 devices
@@ -181,6 +203,8 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
         super.onCleared()
         // Safety net: release the WiFi binding if the VM dies while still bound.
         WifiBinder.release(getApplication<Application>().applicationContext)
+        // Stop GPS updates to spare the battery.
+        locationProvider.stop()
     }
 
     // Command methods

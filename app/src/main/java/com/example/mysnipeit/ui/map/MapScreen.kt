@@ -51,7 +51,7 @@ import com.google.maps.android.compose.rememberCameraPositionState
 @Composable
 fun MapScreen(
     devices: List<Device>,
-    userLocation: LatLng,
+    userLocation: LatLng?,
     onDeviceSelected: (Device) -> Unit,
     onBackClick: () -> Unit,
     isDarkTheme: Boolean = true,
@@ -62,8 +62,16 @@ fun MapScreen(
     val context = LocalContext.current
     var selected by remember(devices) { mutableStateOf<Device?>(devices.firstOrNull { it.status == DeviceStatus.ACTIVE }) }
 
+    // Initial camera center: prefer the user's real GPS, fall back to the
+    // first ACTIVE device (gives operator-meaningful framing if GPS isn't
+    // up yet), fall back finally to a sensible default near the demo area.
+    val initialCenter: LatLng = userLocation
+        ?: devices.firstOrNull { it.status == DeviceStatus.ACTIVE }
+            ?.let { LatLng(it.latitude, it.longitude) }
+        ?: LatLng(31.518209, 34.521274)
+
     val cameraState = rememberCameraPositionState {
-        position = CameraPosition.fromLatLngZoom(userLocation, 14f)
+        position = CameraPosition.fromLatLngZoom(initialCenter, 14f)
     }
 
     // Load the tactical dark map style. Only applied in dark mode; light
@@ -113,14 +121,19 @@ fun MapScreen(
                         mapToolbarEnabled = false,
                     ),
                 ) {
-                    Marker(
-                        state = MarkerState(position = userLocation),
-                        title = "Your Location",
-                        // Use a low-saturation hue. HUE_AZURE reads as a muted
-                        // teal under the tactical style — far less attention-
-                        // grabbing than a saturated blue.
-                        icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE),
-                    )
+                    // Only draw the "Your Location" marker once we actually
+                    // have a fix. Until then the user sees only the device
+                    // markers + the "GPS ACQUIRING…" chip in the map overlay.
+                    userLocation?.let { loc ->
+                        Marker(
+                            state = MarkerState(position = loc),
+                            title = "Your Location",
+                            // Use a low-saturation hue. HUE_AZURE reads as a muted
+                            // teal under the tactical style — far less attention-
+                            // grabbing than a saturated blue.
+                            icon = BitmapDescriptorFactory.defaultMarker(BitmapDescriptorFactory.HUE_AZURE),
+                        )
+                    }
                     devices.forEach { device ->
                         val position = LatLng(device.latitude, device.longitude)
                         val hue = when (device.status) {
@@ -141,9 +154,11 @@ fun MapScreen(
                         )
                     }
                 }
-                // Tactical chrome overlay — coords badge only. BACK now lives
-                // in the TopBar so it's in the same place across screens.
+                // Tactical chrome overlay — coords badge + GPS-status pill.
+                // BACK now lives in the TopBar so it's in the same place
+                // across screens.
                 MgrsBadge()
+                GpsStatusBadge(hasFix = userLocation != null)
             }
 
             // Right — 320dp intel pane (always present, with placeholder copy
@@ -181,6 +196,40 @@ private fun MgrsBadge() {
             text = "ZOOM 14 · UTM",
             color = t.inkDim,
             fontSize = 9.sp,
+            letterSpacing = 0.18.em,
+            fontFamily = JetBrainsMono,
+        )
+    }
+}
+
+/**
+ * Small chip in the top-right corner of the map that surfaces whether the
+ * device GPS has produced a fix yet. Green dot = we have one (the "Your
+ * Location" marker is drawn), amber dot = still acquiring (no marker).
+ */
+@Composable
+private fun BoxScope.GpsStatusBadge(hasFix: Boolean) {
+    val t = LocalTactical.current
+    Row(
+        modifier = Modifier
+            .align(Alignment.TopEnd)
+            .padding(12.dp)
+            .background(t.panel.copy(alpha = 0.92f))
+            .border(1.dp, t.line)
+            .padding(horizontal = 10.dp, vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = "●",
+            color = if (hasFix) t.on else t.accent,
+            fontSize = 10.sp,
+            fontFamily = JetBrainsMono,
+        )
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = if (hasFix) "GPS LOCK" else "GPS ACQUIRING…",
+            color = t.ink,
+            fontSize = 10.sp,
             letterSpacing = 0.18.em,
             fontFamily = JetBrainsMono,
         )
