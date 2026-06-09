@@ -25,6 +25,7 @@ import com.example.mysnipeit.ui.theme.LocalIsDarkTheme
 import com.example.mysnipeit.ui.theme.LocalTactical
 import com.example.mysnipeit.ui.theme.ThemeToggle
 import com.example.mysnipeit.ui.theme.TopBar
+import com.example.mysnipeit.ui.theme.responsiveDp
 import com.example.mysnipeit.R
 import com.google.android.gms.maps.model.BitmapDescriptorFactory
 import com.google.android.gms.maps.model.CameraPosition
@@ -247,7 +248,7 @@ private fun IntelPane(
     val t = LocalTactical.current
     Column(
         modifier = Modifier
-            .width(320.dp)
+            .width(responsiveDp(tablet = 320.dp, compact = 240.dp))
             .fillMaxHeight()
             .background(t.panel)
             .border(1.dp, t.line)

@@ -115,7 +115,7 @@ private fun SidebarNav(
     val t = LocalTactical.current
     Column(
         modifier = Modifier
-            .width(160.dp)
+            .width(responsiveDp(tablet = 160.dp, compact = 110.dp))
             .fillMaxHeight()
             .background(t.panel)
             .drawBehind {
@@ -253,7 +253,6 @@ private fun FilterTab(text: String, active: Boolean) {
 // ----------------------------------------------------------------------------
 @Composable
 private fun DeviceRow(device: Device, onClick: () -> Unit) {
-    val t = LocalTactical.current
     val isActive = device.status == DeviceStatus.ACTIVE
     val isOffline = device.status == DeviceStatus.INACTIVE || device.status == DeviceStatus.ERROR
 
@@ -267,6 +266,25 @@ private fun DeviceRow(device: Device, onClick: () -> Unit) {
             else -> device.id.lastOrNull()?.uppercaseChar()?.toString() ?: "?"
         }
     }
+
+    // On phones the 7-fixed-cell horizontal row (~656dp) overflows the screen
+    // so we render a stacked-card layout instead — same data, two rows.
+    if (isCompactWidth()) {
+        DeviceRowCompact(device, letter, isActive, isOffline, onClick)
+    } else {
+        DeviceRowTablet(device, letter, isActive, isOffline, onClick)
+    }
+}
+
+@Composable
+private fun DeviceRowTablet(
+    device: Device,
+    letter: String,
+    isActive: Boolean,
+    isOffline: Boolean,
+    onClick: () -> Unit,
+) {
+    val t = LocalTactical.current
 
     Row(
         modifier = Modifier
@@ -437,6 +455,179 @@ private fun DeviceRow(device: Device, onClick: () -> Unit) {
                         text = if (isActive) "CONNECT →" else "DETAILS →",
                         color = t.ink,
                         fontSize = 11.sp,
+                        letterSpacing = 0.18.em,
+                        fontFamily = JetBrainsMono,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * Compact / phone layout: two stacked rows instead of seven horizontal cells.
+ *  Row 1: letter | name + sector + IP | status chip
+ *  Row 2: BATT bar + % | LINK | action button
+ * RANGE is dropped here since the app only ever has "—" for it anyway.
+ */
+@Composable
+private fun DeviceRowCompact(
+    device: Device,
+    letter: String,
+    isActive: Boolean,
+    isOffline: Boolean,
+    onClick: () -> Unit,
+) {
+    val t = LocalTactical.current
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(if (isActive) t.panelHi else t.panel)
+            .border(1.dp, if (isActive) t.lineHi else t.line)
+            .clickable(enabled = !isOffline, onClick = onClick),
+    ) {
+        // ---- Row 1 — letter | name | status chip ----
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(IntrinsicSize.Min),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .width(50.dp)
+                    .fillMaxHeight()
+                    .drawBehind {
+                        drawLine(
+                            color = t.line,
+                            start = Offset(size.width, 0f),
+                            end = Offset(size.width, size.height),
+                            strokeWidth = 1.dp.toPx(),
+                        )
+                    },
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = letter,
+                    color = t.ink,
+                    fontSize = 18.sp,
+                    fontFamily = JetBrainsMono,
+                )
+            }
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .padding(horizontal = 14.dp, vertical = 10.dp),
+            ) {
+                Text(
+                    text = device.name.uppercase(),
+                    color = t.ink,
+                    fontSize = 13.sp,
+                    letterSpacing = 0.1.em,
+                    fontFamily = JetBrainsMono,
+                )
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "${device.location.uppercase()} · ${device.ipAddress}",
+                    color = t.inkDim,
+                    fontSize = 9.sp,
+                    letterSpacing = 0.18.em,
+                    fontFamily = JetBrainsMono,
+                )
+            }
+            val tone = when (device.status) {
+                DeviceStatus.ACTIVE -> ChipTone.On
+                DeviceStatus.INACTIVE -> ChipTone.Danger
+                DeviceStatus.SCANNING -> ChipTone.Warn
+                DeviceStatus.ERROR -> ChipTone.Danger
+            }
+            val statusText = when (device.status) {
+                DeviceStatus.ACTIVE -> "ACTIVE"
+                DeviceStatus.INACTIVE -> "OFFLINE"
+                DeviceStatus.SCANNING -> "STANDBY"
+                DeviceStatus.ERROR -> "ERROR"
+            }
+            Box(modifier = Modifier.padding(end = 12.dp)) {
+                Chip(text = statusText, tone = tone)
+            }
+        }
+
+        // ---- horizontal hairline divider ----
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(t.line)
+        )
+
+        // ---- Row 2 — BATT | LINK | action ----
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            // BATT bar
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Lbl(text = "BATT")
+                Spacer(Modifier.width(6.dp))
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(4.dp)
+                        .background(t.line)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .fillMaxWidth(device.batteryLevel / 100f)
+                            .background(t.lineHi)
+                    )
+                }
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = "${device.batteryLevel}%",
+                    color = t.ink,
+                    fontSize = 12.sp,
+                    fontFamily = JetBrainsMono,
+                )
+            }
+            // LINK
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Lbl(text = "LINK")
+                Spacer(Modifier.width(6.dp))
+                Text(
+                    text = if (isOffline) "—" else "OK",
+                    color = t.ink,
+                    fontSize = 12.sp,
+                    fontFamily = JetBrainsMono,
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            // Action
+            when {
+                isOffline -> Text(
+                    text = "UNREACHABLE",
+                    color = t.danger,
+                    fontSize = 9.sp,
+                    letterSpacing = 0.18.em,
+                    fontFamily = JetBrainsMono,
+                )
+                else -> Box(
+                    modifier = Modifier
+                        .background(if (isActive) t.panelHi else Color.Transparent)
+                        .border(1.dp, t.lineHi)
+                        .clickable(onClick = onClick)
+                        .padding(horizontal = 14.dp, vertical = 6.dp)
+                ) {
+                    Text(
+                        text = if (isActive) "CONNECT →" else "DETAILS →",
+                        color = t.ink,
+                        fontSize = 10.sp,
                         letterSpacing = 0.18.em,
                         fontFamily = JetBrainsMono,
                     )
