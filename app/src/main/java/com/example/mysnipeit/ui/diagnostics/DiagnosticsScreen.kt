@@ -83,7 +83,7 @@ private fun DiagSidebar() {
     val t = LocalTactical.current
     Column(
         modifier = Modifier
-            .width(220.dp)
+            .width(responsiveDp(tablet = 220.dp, compact = 140.dp))
             .fillMaxHeight()
             .background(t.panel)
             .drawBehind {

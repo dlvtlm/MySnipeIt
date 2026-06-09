@@ -22,6 +22,8 @@ import com.example.mysnipeit.ui.theme.Lbl
 import com.example.mysnipeit.ui.theme.LocalTactical
 import com.example.mysnipeit.ui.theme.ThemeToggle
 import com.example.mysnipeit.ui.theme.TopBar
+import com.example.mysnipeit.ui.theme.isCompactWidth
+import com.example.mysnipeit.ui.theme.responsiveDp
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -95,11 +97,14 @@ fun HomeScreen(
                     fontFamily = JetBrainsMono,
                 )
                 Spacer(Modifier.height(12.dp))
+                // SNIPEIT wordmark — 88sp on tablets, smaller on phones so
+                // it doesn't push the buttons off the bottom of the screen.
+                val titleSize = if (isCompactWidth()) 64.sp else 88.sp
                 Text(
                     text = "SNIPEIT",
                     color = t.ink,
-                    fontSize = 88.sp,
-                    lineHeight = 88.sp,
+                    fontSize = titleSize,
+                    lineHeight = titleSize,
                     letterSpacing = 0.02.em,
                     fontFamily = JetBrainsMono,
                     fontWeight = FontWeight.SemiBold,
@@ -107,10 +112,11 @@ fun HomeScreen(
                 Spacer(Modifier.height(8.dp))
                 // Letter-spaced subtitle — each character rendered separately
                 // so the spacing matches the design's wide tracking.
+                val subtitleCellWidth = responsiveDp(tablet = 14.dp, compact = 11.dp)
                 Row {
                     "SMART SPOTTER SYSTEM".forEach { ch ->
                         Box(
-                            modifier = Modifier.width(14.dp),
+                            modifier = Modifier.width(subtitleCellWidth),
                             contentAlignment = Alignment.Center,
                         ) {
                             Text(
@@ -122,10 +128,12 @@ fun HomeScreen(
                         }
                     }
                 }
-                Spacer(Modifier.height(64.dp))
+                Spacer(Modifier.height(responsiveDp(tablet = 64.dp, compact = 36.dp)))
 
                 // Three bracket buttons, side by side
-                Row(horizontalArrangement = Arrangement.spacedBy(24.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(
+                    responsiveDp(tablet = 24.dp, compact = 12.dp)
+                )) {
                     BracketButton(
                         number = "01",
                         title = "DEVICE LIST",
@@ -189,9 +197,14 @@ private fun BracketButton(
     onClick: () -> Unit,
 ) {
     val t = LocalTactical.current
+    // Shrink on phones — 3 x 200dp + 2 x 24dp spacing = 648dp, which
+    // overflows a phone-landscape screen. 150dp keeps the trio within
+    // ~500dp and still leaves room for letter-spaced text.
+    val width = responsiveDp(tablet = 200.dp, compact = 150.dp)
+    val height = responsiveDp(tablet = 90.dp, compact = 76.dp)
     Bracket(
         modifier = Modifier
-            .size(width = 200.dp, height = 90.dp)
+            .size(width = width, height = height)
             .clickable(onClick = onClick),
         contentPadding = PaddingValues(0.dp),
     ) {
