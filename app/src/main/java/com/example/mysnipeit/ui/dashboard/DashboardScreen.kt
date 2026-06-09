@@ -375,12 +375,12 @@ private fun SensorStrip(
         // when its sub-frame is absent or its `valid` flag is false, which we
         // render as "—".
         SensorCell(
-            label = "T",
+            label = "TEMPERATURE",
             value = sensorData.temperatureC()?.let { "${it.toInt()}°C" } ?: "—",
             modifier = Modifier.weight(1f),
         )
         SensorCell(
-            label = "HUM",
+            label = "HUMIDITY",
             value = sensorData.humidityPct()?.let { "${it.toInt()}%" } ?: "—",
             modifier = Modifier.weight(1f),
         )
@@ -390,8 +390,8 @@ private fun SensorStrip(
         // On compact screens we drop the placeholders to give the real cells
         // more breathing room — they'd just say "—" anyway.
         if (!isCompactWidth()) {
-            SensorCell(label = "WIND", value = "—", modifier = Modifier.weight(1f))
-            SensorCell(label = "DIR",  value = "—", modifier = Modifier.weight(1f))
+            SensorCell(label = "WIND_SPD", value = "—", modifier = Modifier.weight(1f))
+            SensorCell(label = "WIND_DIR",  value = "—", modifier = Modifier.weight(1f))
         }
         // GPS — lat, lon, and (when valid) satellite count packed into one cell.
         SensorCell(
@@ -404,7 +404,7 @@ private fun SensorStrip(
             modifier = Modifier.weight(1.6f),
         )
         SensorCell(
-            label = "LSR",
+            label = "DISTANCE",
             value = sensorData.distanceM()?.let { "${it.toInt()}m" } ?: "—",
             modifier = Modifier.weight(1f),
             hideRightBorder = true,
