@@ -39,7 +39,7 @@ MySnipeIt/
 │           ├── viewmodel/SniperViewModel.kt          # All app state, nav, device list, theme toggle
 │           ├── data/
 │           │   ├── location/DeviceLocationProvider.kt # FusedLocationProvider wrapper → StateFlow<LatLng?>
-│           │   ├── models/                            # All data classes (Device, SensorData, Target, ShootingSolution, SystemStatus)
+│           │   ├── models/                            # All data classes (Device, SensorData, Target, ShootingSolution, SystemStatus, BallisticProfiles)
 │           │   ├── network/
 │           │   │   ├── RaspberryPiClient.kt          # WS + HTTP client to RPi; pacer + IoU tracker + EMA smoother + keepalive
 │           │   │   ├── WifiBinder.kt                 # Force traffic onto WiFi (RPi AP has no internet)
