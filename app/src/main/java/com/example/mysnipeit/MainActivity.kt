@@ -26,6 +26,7 @@ import com.example.mysnipeit.ui.device.DeviceSelectionScreen
 import com.example.mysnipeit.ui.map.MapScreen
 import com.example.mysnipeit.ui.dashboard.DashboardScreen
 import android.util.Log
+import com.example.mysnipeit.ui.dashboard.LoadoutDialog
 import com.example.mysnipeit.ui.diagnostics.DiagnosticsScreen
 
 class MainActivity : ComponentActivity() {
@@ -116,6 +117,12 @@ fun SniperApp(viewModel: SniperViewModel) {
 
     // Track menu state
     var showMenu by remember { mutableStateOf(false) }
+    var showLoadout by remember { mutableStateOf(false) }
+
+    // Ballistic loadout — persisted cartridge + rifle profile picks; chosen
+    // via MENU → Loadout on the dashboard, consumed by the ballistic solver.
+    val selectedCartridge by viewModel.selectedCartridge.collectAsStateWithLifecycle()
+    val selectedRifle by viewModel.selectedRifle.collectAsStateWithLifecycle()
 
     when (uiState.currentScreen) {
         AppScreen.HOME -> {
@@ -177,14 +184,29 @@ fun SniperApp(viewModel: SniperViewModel) {
             )
 
             // Menu dropdown — same as before; gives the dashboard a way to
-            // reach Diagnostics without leaving the operator surface.
+            // reach Diagnostics and the Loadout picker without leaving the
+            // operator surface.
             if (showMenu) {
                 DashboardMenu(
                     onDismiss = { showMenu = false },
                     onDiagnosticsClick = {
                         showMenu = false
                         viewModel.navigateToDiagnostics()
-                    }
+                    },
+                    onLoadoutClick = {
+                        showMenu = false
+                        showLoadout = true
+                    },
+                )
+            }
+
+            if (showLoadout) {
+                LoadoutDialog(
+                    selectedCartridgeId = selectedCartridge.id,
+                    selectedRifleId = selectedRifle.id,
+                    onCartridgeSelect = { viewModel.selectCartridge(it) },
+                    onRifleSelect = { viewModel.selectRifle(it) },
+                    onDismiss = { showLoadout = false },
                 )
             }
         }
@@ -202,7 +224,8 @@ fun SniperApp(viewModel: SniperViewModel) {
 @Composable
 fun DashboardMenu(
     onDismiss: () -> Unit,
-    onDiagnosticsClick: () -> Unit
+    onDiagnosticsClick: () -> Unit,
+    onLoadoutClick: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -214,25 +237,8 @@ fun DashboardMenu(
         },
         text = {
             Column {
-                TextButton(
-                    onClick = onDiagnosticsClick,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "⚙ ",
-                            fontSize = 20.sp
-                        )
-                        Text(
-                            text = "Diagnostics",
-                            fontSize = 16.sp
-                        )
-                    }
-                }
+                MenuEntry(icon = "⚙ ", label = "Diagnostics", onClick = onDiagnosticsClick)
+                MenuEntry(icon = "⌖ ", label = "Loadout", onClick = onLoadoutClick)
             }
         },
         confirmButton = {
@@ -241,4 +247,27 @@ fun DashboardMenu(
             }
         }
     )
+}
+
+@Composable
+private fun MenuEntry(icon: String, label: String, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = icon,
+                fontSize = 20.sp
+            )
+            Text(
+                text = label,
+                fontSize = 16.sp
+            )
+        }
+    }
 }

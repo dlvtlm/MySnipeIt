@@ -23,7 +23,7 @@ Android tactical operator app that talks to a **Raspberry Pi 5** mounted on a re
 - **Maps:** `play-services-maps` + `maps-compose` 4.3.0, plus `play-services-location` (FusedLocationProvider). Google Maps API key injected via Secrets Gradle plugin as `${MAPS_API_KEY}` in the manifest — put it in `local.properties` as `MAPS_API_KEY=...`.
 - **Permissions runtime:** Accompanist Permissions 0.32.0. Location permission is requested manually in `MainActivity` (not via Accompanist there).
 - **JSON:** Gson 2.10.1 (kotlinx-serialization is in the catalog but not applied).
-- **Persistence:** `SharedPreferences` only ("snipeit" prefs, currently just `dark_theme` boolean). No Room, no DataStore.
+- **Persistence:** `SharedPreferences` only ("snipeit" prefs: `dark_theme` boolean, `cartridge_id` + `rifle_id` strings for the ballistic loadout). No Room, no DataStore.
 
 ## Repo layout
 
@@ -52,6 +52,7 @@ MySnipeIt/
 │               ├── dashboard/
 │               │   ├── DashboardScreen.kt            # Operator HUD chrome around the video
 │               │   ├── TacticalVideoPlayer.kt        # ExoPlayer RTSP + bbox overlays + reticles
+│               │   ├── LoadoutDialog.kt              # Cartridge + rifle profile picker (MENU → Loadout)
 │               │   └── MockVideoFeed.kt              # Plays bundled field_video.mp4 when no RTSP
 │               ├── diagnostics/DiagnosticsScreen.kt  # Live sensor / status dump
 │               ├── components/TacticalCompass.kt     # Custom azimuth compass widget
@@ -91,6 +92,7 @@ Exposed from `SniperViewModel`:
 - `streamReady: StateFlow<Boolean>` + `rtspStreamUrl: StateFlow<String?>`
 - `userLocation: StateFlow<LatLng?>` — device GPS, null until permission granted + first fix
 - `darkTheme: StateFlow<Boolean>` — persisted to SharedPreferences
+- `selectedCartridge: StateFlow<CartridgeProfile>` + `selectedRifle: StateFlow<RifleProfile>` — ballistic loadout, persisted to SharedPreferences, chosen via dashboard MENU → Loadout (`LoadoutDialog`). Presets live in `BallisticProfiles`.
 
 ### Navigation
 

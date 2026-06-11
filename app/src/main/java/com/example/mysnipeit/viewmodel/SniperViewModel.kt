@@ -37,6 +37,30 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
         prefs.edit().putBoolean("dark_theme", next).apply()
     }
 
+    // --- Ballistic loadout (cartridge + rifle profile) ----------------------
+    // Persisted to SharedPreferences like dark_theme so the operator's pick
+    // survives restarts. Unknown/absent ids fall back to the catalog default
+    // via cartridgeById/rifleById. The ballistic solver reads these flows.
+    private val _selectedCartridge = MutableStateFlow(
+        BallisticProfiles.cartridgeById(prefs.getString("cartridge_id", null))
+    )
+    val selectedCartridge: StateFlow<CartridgeProfile> = _selectedCartridge.asStateFlow()
+
+    private val _selectedRifle = MutableStateFlow(
+        BallisticProfiles.rifleById(prefs.getString("rifle_id", null))
+    )
+    val selectedRifle: StateFlow<RifleProfile> = _selectedRifle.asStateFlow()
+
+    fun selectCartridge(id: String) {
+        _selectedCartridge.value = BallisticProfiles.cartridgeById(id)
+        prefs.edit().putString("cartridge_id", id).apply()
+    }
+
+    fun selectRifle(id: String) {
+        _selectedRifle.value = BallisticProfiles.rifleById(id)
+        prefs.edit().putString("rifle_id", id).apply()
+    }
+
     // --- Device GPS --------------------------------------------------------
     // Real device location, populated once the runtime location permission
     // has been granted (see MainActivity). Null until then OR while we wait
