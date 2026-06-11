@@ -442,6 +442,20 @@ class RaspberryPiClient {
                             altitudeM = 35.0,
                             hAccM = 1.4,
                         ),
+                        compass = CompassFrame(
+                            valid = true,
+                            rawX = 0,
+                            rawY = 0,
+                            rawZ = 0,
+                            temperatureC = 22f,
+                            headingDeg = Math.random().toFloat() * 360f,
+                        ),
+                        wind = WindFrame(
+                            speedValid = true,
+                            speedMps = Math.random().toFloat() * 8f,
+                            directionValid = true,
+                            directionDeg = Math.random().toFloat() * 360f,
+                        ),
                     ),
                 )
 
@@ -757,14 +771,21 @@ class RaspberryPiClient {
  *     "servo":                { "horizontal_deg": 87.3, "vertical_deg": 12.4 },
  *     "gps":                  { "valid": true, "fix_type": 3, "num_satellites": 9,
  *                                "latitude_deg": 32.07, "longitude_deg": 34.78,
- *                                "altitude_m": 35.2, "h_acc_m": 1.4 }
+ *                                "altitude_m": 35.2, "h_acc_m": 1.4 },
+ *     "compass":              { "valid": true, "raw_x": 123, "raw_y": -45, "raw_z": 678,
+ *                                "temperature_c": 22.1, "heading_deg": 187.42 },
+ *     "wind":                 { "speed_valid": true, "speed_mps": 3.4,
+ *                                "direction_valid": true, "direction_deg": 215.0 }
  *   }
  * }
  *
  * Display rule on the app side: each sub-frame's `valid` flag gates whether
  * the dashboard renders the values. ServoFrame has no `valid` and is treated
- * as always valid when the sub-frame is present. See [SensorData] for the
- * exact Kotlin shape and the helper extensions used by the dashboard.
+ * as always valid when the sub-frame is present. WindFrame has TWO valid
+ * flags — speed and direction are independent. CompassFrame's `heading_deg`
+ * is emitted as JSON `null` (not a number) when the magnetometer hasn't
+ * fixed yet, so the Kotlin type is `Float?`. See [SensorData] for the exact
+ * Kotlin shape and the helper extensions used by the dashboard.
  *
  * Target Detection:
  * {

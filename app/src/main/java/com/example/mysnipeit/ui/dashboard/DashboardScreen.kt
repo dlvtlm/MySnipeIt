@@ -24,6 +24,8 @@ import com.example.mysnipeit.data.models.gpsLatLon
 import com.example.mysnipeit.data.models.gpsSatellites
 import com.example.mysnipeit.data.models.humidityPct
 import com.example.mysnipeit.data.models.temperatureC
+import com.example.mysnipeit.data.models.windDirectionDeg
+import com.example.mysnipeit.data.models.windSpeedMps
 import com.example.mysnipeit.ui.theme.*
 
 /**
@@ -384,14 +386,21 @@ private fun SensorStrip(
             value = sensorData.humidityPct()?.let { "${it.toInt()}%" } ?: "—",
             modifier = Modifier.weight(1f),
         )
-        // WIND and DIR are placeholders — the Pi has no anemometer yet. The
-        // cells are kept so the bottom strip still feels deliberate, and
-        // they'll start populating automatically once a WindFrame is added.
-        // On compact screens we drop the placeholders to give the real cells
-        // more breathing room — they'd just say "—" anyway.
+        // Wind speed + direction come from the Pi's WindFrame (two
+        // independent valid flags — one channel can read while the other
+        // is invalid). On compact screens we drop both cells to give the
+        // remaining ones more breathing room.
         if (!isCompactWidth()) {
-            SensorCell(label = "WIND_SPD", value = "—", modifier = Modifier.weight(1f))
-            SensorCell(label = "WIND_DIR",  value = "—", modifier = Modifier.weight(1f))
+            SensorCell(
+                label = "WIND_SPD",
+                value = sensorData.windSpeedMps()?.let { String.format("%.1f m/s", it) } ?: "—",
+                modifier = Modifier.weight(1f),
+            )
+            SensorCell(
+                label = "WIND_DIR",
+                value = sensorData.windDirectionDeg()?.let { "${it.toInt()}°" } ?: "—",
+                modifier = Modifier.weight(1f),
+            )
         }
         // GPS — lat, lon, and (when valid) satellite count packed into one cell.
         SensorCell(

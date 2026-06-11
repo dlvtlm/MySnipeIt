@@ -4,7 +4,7 @@
 
 ## What this is
 
-Android tactical operator app that talks to a **Raspberry Pi 5** mounted on a remote sniper/sensor rig. The phone/tablet is the operator HUD: it shows the Pi's live RTSP video, overlays ML target detections, displays sensor telemetry (rangefinder, temp/humidity, GPS, servo angles), and sends commands (lock/unlock target, calibrate, manual target, e-stop) back to the Pi over WebSocket + HTTP.
+Android tactical operator app that talks to a **Raspberry Pi 5** mounted on a remote sniper/sensor rig. The phone/tablet is the operator HUD: it shows the Pi's live RTSP video, overlays ML target detections, displays sensor telemetry (rangefinder, temp/humidity, GPS, wind, servo angles, compass), and sends commands (lock/unlock target, calibrate, manual target, e-stop) back to the Pi over WebSocket + HTTP.
 
 - **Platform:** Android, `minSdk 26`, `targetSdk/compileSdk 34`, landscape-only, immersive (system bars hidden).
 - **UI:** 100% Jetpack Compose, Material3, custom "tactical" palette (dark + light).
@@ -106,7 +106,7 @@ No Nav Compose graph — `SniperApp` does a manual `when (uiState.currentScreen)
 - **RTSP video:** `rtsp://<ip>:8554/<stream_name>` (stream name comes from `stream_ready` event)
 
 ### Incoming WS message types (handled in `handleWebSocketMessage`)
-- `sensor_data` — nested `ddl_frame` with `distance` / `temperature_humidity` / `servo` / `gps` sub-frames. Each sub-frame has a `valid` flag (except `servo`); dashboard hides values when `valid=false`. See `SensorData.kt` for the helper extensions (`distanceM()`, `gpsLatLon()`, etc.) — always use them, don't access nested fields directly.
+- `sensor_data` — nested `ddl_frame` with `distance` / `temperature_humidity` / `servo` / `gps` / `compass` / `wind` sub-frames. Each sub-frame has a `valid` flag (except `servo`, which has none, and `wind`, which has two: `speed_valid` and `direction_valid` independently). Dashboard hides values when `valid=false`. Wind speed + direction are shown on the bottom sensor strip; compass + servo are parsed but NOT displayed (kept for the future ballistics calculator). See `SensorData.kt` for the helper extensions (`distanceM()`, `gpsLatLon()`, `windSpeedMps()`, `windDirectionDeg()`, `compassHeadingDeg()`, etc.) — always use them, don't access nested fields directly.
 - `target_detection` — array of `{id, class, confidence, bbox{x,y,width,height}}` in pixel coords against a **1920×1080** video frame. Hardcoded resolution in `TacticalVideoPlayer.kt` (`VIDEO_WIDTH/VIDEO_HEIGHT`).
 - `shooting_solution` — `{targetId, azimuth, elevation, windageAdjustment, elevationAdjustment, confidence, timestamp}`.
 - `stream_ready` — `{rtsp_port, stream_name}` → builds `rtspStreamUrl` and flips `streamReady`.
@@ -171,6 +171,7 @@ Runtime permission flow: `MainActivity.ensureLocationPermission()` checks `ACCES
 - **No tests beyond the AS templates** — `ExampleInstrumentedTest` and `ExampleUnitTest` are unmodified.
 - **Hardcoded device list** — `availableDevices` in `SniperViewModel` is a fixed 4 entries. Real device discovery isn't implemented.
 - **Strings are mostly inlined** — `res/values/strings.xml` only has `app_name`. Most UI strings (chip labels, button text, etc.) are hardcoded literals in Composables. Not translation-ready.
+- **`compass.heading_deg` can be JSON `null`** — the Pi's C `build_json` emits the literal token `null` (not a number) when the magnetometer hasn't fixed yet. `CompassFrame.headingDeg` is therefore `Float?`. Always read it via `compassHeadingDeg()` which gates on both `valid` and non-null; never treat a missing heading as `0°` (true north).
 
 ## Maintenance — keep this doc current
 
