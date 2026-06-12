@@ -38,6 +38,7 @@ MySnipeIt/
 │           ├── MainActivity.kt                       # Single Activity, hosts Compose root, perms, immersive mode
 │           ├── viewmodel/SniperViewModel.kt          # All app state, nav, device list, theme toggle
 │           ├── data/
+│           │   ├── ballistics/TargetLocalizer.kt      # Pure fn: Pi sensors → target world coords; RigGeometry constants
 │           │   ├── location/DeviceLocationProvider.kt # FusedLocationProvider wrapper → StateFlow<LatLng?>
 │           │   ├── models/                            # All data classes (Device, SensorData, Target, ShootingSolution, SystemStatus, BallisticProfiles)
 │           │   ├── network/
@@ -170,7 +171,8 @@ Runtime permission flow: `MainActivity.ensureLocationPermission()` checks `ACCES
 - **`SystemStatus` from WS doesn't match `SystemStatus` data class precisely** — Gson parses field-by-field, missing fields become defaults. If you add fields, double-check both sides.
 - **Hardcoded video resolution** — 1920×1080 in `TacticalVideoPlayer.kt`. If the Pi ever changes resolution, this breaks bbox scaling.
 - **`previousScreen` nav is a hack** — manual back-stack tracking instead of Nav Compose. Tolerable for 5 screens, would need replacing if nav gets richer.
-- **No tests beyond the AS templates** — `ExampleInstrumentedTest` and `ExampleUnitTest` are unmodified.
+- **Almost no tests** — `ExampleInstrumentedTest`/`ExampleUnitTest` are unmodified AS templates. The one real suite is `TargetLocalizerTest` (pure-math geodesy for the ballistics localizer).
+- **`RigGeometry` constants are UNVERIFIED** — `TargetLocalizer.kt` assumes compass on the fixed base, servo pan/tilt centered at 90°, declination 0. One field test against the real rig must confirm/flip these; tests in `TargetLocalizerTest` encode the same assumptions.
 - **Hardcoded device list** — `availableDevices` in `SniperViewModel` is a fixed 4 entries. Real device discovery isn't implemented.
 - **Strings are mostly inlined** — `res/values/strings.xml` only has `app_name`. Most UI strings (chip labels, button text, etc.) are hardcoded literals in Composables. Not translation-ready.
 - **`compass.heading_deg` can be JSON `null`** — the Pi's C `build_json` emits the literal token `null` (not a number) when the magnetometer hasn't fixed yet. `CompassFrame.headingDeg` is therefore `Float?`. Always read it via `compassHeadingDeg()` which gates on both `valid` and non-null; never treat a missing heading as `0°` (true north).
