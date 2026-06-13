@@ -377,7 +377,28 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun navigateToDiagnostics() {
-        _uiState.value = _uiState.value.copy(currentScreen = AppScreen.DIAGNOSTICS)
+        // Remember where we came from so the back button restores it. The
+        // dashboard menu state (if open) is in uiState already, so it'll
+        // naturally re-render when we navigate back to the dashboard.
+        _uiState.value = _uiState.value.copy(
+            currentScreen = AppScreen.DIAGNOSTICS,
+            diagnosticsFromScreen = _uiState.value.currentScreen,
+        )
+    }
+
+    fun goBackFromDiagnostics() {
+        val target = _uiState.value.diagnosticsFromScreen
+        _uiState.value = _uiState.value.copy(
+            currentScreen = target,
+            diagnosticsFromScreen = AppScreen.HOME,
+        )
+    }
+
+    /** Open / close the dashboard's MENU dialog. Lives in uiState so its
+     *  state survives a round-trip into the Diagnostics screen — the menu
+     *  reopens automatically when the operator returns to the dashboard. */
+    fun setDashboardMenuOpen(open: Boolean) {
+        _uiState.value = _uiState.value.copy(dashboardMenuOpen = open)
     }
 
     fun selectDevice(device: Device) {
@@ -496,7 +517,15 @@ data class SniperUiState(
     val connectionError: String? = null,
     val isVideoFullscreen: Boolean = false,
     val selectedTargetId: String? = null,
-    val previousScreen: AppScreen? = null
+    val previousScreen: AppScreen? = null,
+    // Where to return when the operator hits BACK on the Diagnostics
+    // screen. Captured by navigateToDiagnostics(), consumed by
+    // goBackFromDiagnostics(). Defaults to HOME so the first-launch path
+    // (Home → Diagnostics → back) still feels right.
+    val diagnosticsFromScreen: AppScreen = AppScreen.HOME,
+    // Dashboard MENU dialog visibility. Lifted out of the composable so it
+    // persists across a Diagnostics round-trip.
+    val dashboardMenuOpen: Boolean = false,
 )
 
 enum class AppScreen {

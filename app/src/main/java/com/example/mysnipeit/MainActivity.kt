@@ -119,8 +119,11 @@ fun SniperApp(viewModel: SniperViewModel) {
     // ballistics will use it directly as a calculator input).
     val userLocation by viewModel.userLocation.collectAsStateWithLifecycle()
 
-    // Track menu state
-    var showMenu by remember { mutableStateOf(false) }
+    // Dashboard MENU dialog state lives in the ViewModel so it survives a
+    // round-trip into Diagnostics (operator hits MENU → Diagnostics → BACK
+    // and the menu reopens automatically). Loadout stays local — there's
+    // no navigation away from it.
+    val showMenu = uiState.dashboardMenuOpen
     var showLoadout by remember { mutableStateOf(false) }
 
     // Ballistic loadout — persisted cartridge + rifle profile picks; chosen
@@ -187,7 +190,7 @@ fun SniperApp(viewModel: SniperViewModel) {
                 onConnectClick = { viewModel.connectToSystem() },
                 onDisconnectClick = { viewModel.disconnectFromSystem() },
                 onBackClick = { viewModel.goBackFromDashboard() },
-                onMenuClick = { showMenu = true },
+                onMenuClick = { viewModel.setDashboardMenuOpen(true) },
                 isDarkTheme = darkTheme,
                 onToggleTheme = { viewModel.toggleTheme() },
             )
@@ -197,13 +200,15 @@ fun SniperApp(viewModel: SniperViewModel) {
             // operator surface.
             if (showMenu) {
                 DashboardMenu(
-                    onDismiss = { showMenu = false },
+                    onDismiss = { viewModel.setDashboardMenuOpen(false) },
                     onDiagnosticsClick = {
-                        showMenu = false
+                        // Leave the menu OPEN in state — when the operator
+                        // returns from Diagnostics the dashboard re-renders
+                        // and the menu reopens automatically.
                         viewModel.navigateToDiagnostics()
                     },
                     onLoadoutClick = {
-                        showMenu = false
+                        viewModel.setDashboardMenuOpen(false)
                         showLoadout = true
                     },
                 )
@@ -222,7 +227,7 @@ fun SniperApp(viewModel: SniperViewModel) {
 
         AppScreen.DIAGNOSTICS -> {
             DiagnosticsScreen(
-                onBackClick = { viewModel.navigateToHome() },
+                onBackClick = { viewModel.goBackFromDiagnostics() },
                 sensorData = sensorData,
                 sensorHistory = sensorHistory,
                 forceMockMode = forceMockMode,
