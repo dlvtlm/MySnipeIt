@@ -38,7 +38,9 @@ MySnipeIt/
 │           ├── MainActivity.kt                       # Single Activity, hosts Compose root, perms, immersive mode
 │           ├── viewmodel/SniperViewModel.kt          # All app state, nav, device list, theme toggle
 │           ├── data/
-│           │   ├── ballistics/TargetLocalizer.kt      # Pure fn: Pi sensors → target world coords; RigGeometry constants
+│           │   ├── ballistics/
+│           │   │   ├── TargetLocalizer.kt             # Pure fn: Pi sensors → target world coords; RigGeometry constants
+│           │   │   └── FiringSolutionSolver.kt        # Pure fn: sniper GPS + target + cartridge/rifle/atmosphere → AZ / hold-over / windage / TOF
 │           │   ├── location/DeviceLocationProvider.kt # FusedLocationProvider wrapper → StateFlow<LatLng?>
 │           │   ├── models/                            # All data classes (Device, SensorData, Target, ShootingSolution, SystemStatus, BallisticProfiles)
 │           │   ├── network/
