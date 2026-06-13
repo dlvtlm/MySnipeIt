@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.mysnipeit.data.models.SensorData
 import com.example.mysnipeit.data.network.NetworkTester
 import com.example.mysnipeit.ui.theme.*
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -36,9 +37,20 @@ import kotlinx.coroutines.launch
  * calls, same DiagnosticsState data model, same TestStatus enum. Only the
  * UI was rewritten.
  */
+/**
+ * Which left-rail section the diagnostics screen is currently showing.
+ *  - CONNECTIVITY: ping + port scan + recommendations (original behaviour)
+ *  - LIVE_SENSORS: raw sensor stream (every sub-frame, valid flags as-is,
+ *                  plus a rolling history) — replaces the old TELEMETRY
+ *                  placeholder that never had an implementation.
+ */
+private enum class DiagSection { CONNECTIVITY, LIVE_SENSORS }
+
 @Composable
 fun DiagnosticsScreen(
     onBackClick: () -> Unit,
+    sensorData: SensorData?,
+    sensorHistory: List<SensorData>,
     isDarkTheme: Boolean = true,
     onToggleTheme: () -> Unit = {},
     viewModel: DiagnosticsViewModel = viewModel(),
@@ -46,6 +58,7 @@ fun DiagnosticsScreen(
     val t = LocalTactical.current
     val state by viewModel.diagnosticsState.collectAsState()
     val scope = rememberCoroutineScope()
+    var section by remember { mutableStateOf(DiagSection.CONNECTIVITY) }
 
     Column(
         modifier = Modifier
@@ -59,13 +72,22 @@ fun DiagnosticsScreen(
             ThemeToggle(isDark = isDarkTheme, onToggle = onToggleTheme)
         }
         Row(modifier = Modifier.fillMaxSize()) {
-            DiagSidebar()
-            DiagMainPane(
-                state = state,
-                onIpChange = viewModel::updateIpAddress,
-                onRunAll = { scope.launch { viewModel.runFullDiagnostics() } },
-                onQuickPing = { scope.launch { viewModel.quickPingTest() } },
+            DiagSidebar(
+                active = section,
+                onSelect = { section = it },
             )
+            when (section) {
+                DiagSection.CONNECTIVITY -> DiagMainPane(
+                    state = state,
+                    onIpChange = viewModel::updateIpAddress,
+                    onRunAll = { scope.launch { viewModel.runFullDiagnostics() } },
+                    onQuickPing = { scope.launch { viewModel.quickPingTest() } },
+                )
+                DiagSection.LIVE_SENSORS -> LiveSensorsPane(
+                    sensorData = sensorData,
+                    history = sensorHistory,
+                )
+            }
         }
     }
 }
@@ -73,13 +95,17 @@ fun DiagnosticsScreen(
 // ----------------------------------------------------------------------------
 // Sidebar
 //
-// LOGS removed (the app has no log screen). MOCK MODE and TELEMETRY are kept
-// as placeholders for future features but rendered as DISABLED — they don't
-// pretend to be clickable. The BACK button used to live at the bottom of
-// this sidebar; it now lives in the TopBar for cross-screen consistency.
+// Two live sections now: CONNECTIVITY (the original ping/port-scan flow) and
+// LIVE SENSORS (raw sensor stream + rolling history; replaces the old
+// TELEMETRY placeholder, which was never implemented). MOCK MODE placeholder
+// was removed — no concrete plan for it. The BACK button lives in the TopBar
+// for cross-screen consistency.
 // ----------------------------------------------------------------------------
 @Composable
-private fun DiagSidebar() {
+private fun DiagSidebar(
+    active: DiagSection,
+    onSelect: (DiagSection) -> Unit,
+) {
     val t = LocalTactical.current
     Column(
         modifier = Modifier
@@ -98,16 +124,22 @@ private fun DiagSidebar() {
     ) {
         Lbl(text = "DIAGNOSTICS")
         Spacer(Modifier.height(16.dp))
-        DiagNavItem(label = "CONNECTIVITY", active = true,  disabled = false)
+        DiagNavItem(
+            label = "CONNECTIVITY",
+            active = active == DiagSection.CONNECTIVITY,
+            onClick = { onSelect(DiagSection.CONNECTIVITY) },
+        )
         Spacer(Modifier.height(4.dp))
-        DiagNavItem(label = "MOCK MODE",    active = false, disabled = true)
-        Spacer(Modifier.height(4.dp))
-        DiagNavItem(label = "TELEMETRY",    active = false, disabled = true)
+        DiagNavItem(
+            label = "LIVE SENSORS",
+            active = active == DiagSection.LIVE_SENSORS,
+            onClick = { onSelect(DiagSection.LIVE_SENSORS) },
+        )
     }
 }
 
 @Composable
-private fun DiagNavItem(label: String, active: Boolean, disabled: Boolean) {
+private fun DiagNavItem(label: String, active: Boolean, onClick: () -> Unit) {
     val t = LocalTactical.current
     Row(
         modifier = Modifier
@@ -123,30 +155,17 @@ private fun DiagNavItem(label: String, active: Boolean, disabled: Boolean) {
                     )
                 }
             }
+            .clickable(onClick = onClick)
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
     ) {
         Text(
             text = label,
-            color = when {
-                active -> t.ink
-                disabled -> t.inkMute
-                else -> t.inkDim
-            },
+            color = if (active) t.ink else t.inkDim,
             fontSize = 11.sp,
             letterSpacing = 0.14.em,
             fontFamily = JetBrainsMono,
         )
-        if (disabled) {
-            Text(
-                text = "SOON",
-                color = t.inkMute,
-                fontSize = 8.sp,
-                letterSpacing = 0.2.em,
-                fontFamily = JetBrainsMono,
-            )
-        }
     }
 }
 
@@ -227,6 +246,267 @@ private fun DiagMainPane(
             fontFamily = JetBrainsMono,
         )
     }
+}
+
+// ----------------------------------------------------------------------------
+// LIVE SENSORS pane
+//
+// Shows every sub-frame from the RAW sensor stream (NOT the dashboard's
+// latched version) so the operator can see actual valid/invalid flags as
+// they come from the Pi. Top half: current-frame summary cards including
+// the sensors the dashboard doesn't display (compass, servo). Bottom half:
+// rolling history of the last [SENSOR_HISTORY_SIZE] frames, oldest first.
+// ----------------------------------------------------------------------------
+@Composable
+private fun LiveSensorsPane(
+    sensorData: SensorData?,
+    history: List<SensorData>,
+) {
+    val t = LocalTactical.current
+    val ddl = sensorData?.ddlFrame
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 28.dp, vertical = 24.dp)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column {
+                Lbl(text = "STREAM · DDL_FRAME · RAW")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "LIVE SENSORS",
+                    color = t.ink,
+                    fontSize = 22.sp,
+                    letterSpacing = 0.06.em,
+                    fontFamily = JetBrainsMono,
+                )
+            }
+            val ts = sensorData?.timestamp
+            Chip(
+                text = if (ts != null && ts > 0L) "FRAME @ $ts" else "NO DATA",
+                tone = if (ts != null && ts > 0L) ChipTone.On else ChipTone.Dim,
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+
+        SubFrameCard(
+            title = "DISTANCE",
+            valid = ddl?.distance?.valid,
+            lines = ddl?.distance?.let {
+                listOf(
+                    "distance_m  = %.2f".format(it.distanceM),
+                    "status      = ${it.status}",
+                    "precision   = ${it.precision}",
+                    "strength    = ${it.strength}",
+                )
+            },
+        )
+        Spacer(Modifier.height(12.dp))
+        SubFrameCard(
+            title = "TEMPERATURE / HUMIDITY",
+            valid = ddl?.temperatureHumidity?.valid,
+            lines = ddl?.temperatureHumidity?.let {
+                listOf(
+                    "temperature_c = %.2f".format(it.temperatureC),
+                    "humidity_pct  = %.2f".format(it.humidityPct),
+                )
+            },
+        )
+        Spacer(Modifier.height(12.dp))
+        SubFrameCard(
+            title = "SERVO",
+            // ServoFrame has no `valid` flag on the Pi (matches the C struct).
+            // Pass null so the chip renders "—" instead of OK/INVALID.
+            valid = null,
+            lines = ddl?.servo?.let {
+                listOf(
+                    "horizontal_deg = %.2f".format(it.horizontalDeg),
+                    "vertical_deg   = %.2f".format(it.verticalDeg),
+                )
+            },
+        )
+        Spacer(Modifier.height(12.dp))
+        SubFrameCard(
+            title = "GPS",
+            valid = ddl?.gps?.valid,
+            lines = ddl?.gps?.let {
+                listOf(
+                    "fix_type       = ${it.fixType}",
+                    "num_satellites = ${it.numSatellites}",
+                    "latitude_deg   = %.6f".format(it.latitudeDeg),
+                    "longitude_deg  = %.6f".format(it.longitudeDeg),
+                    "altitude_m     = %.2f".format(it.altitudeM),
+                    "h_acc_m        = %.2f".format(it.hAccM),
+                )
+            },
+        )
+        Spacer(Modifier.height(12.dp))
+        SubFrameCard(
+            title = "COMPASS",
+            valid = ddl?.compass?.valid,
+            lines = ddl?.compass?.let {
+                // headingDeg is nullable — show "null" literally so the
+                // diagnostic operator sees the Pi's actual emission.
+                val heading = it.headingDeg?.let { h -> "%.2f".format(h) } ?: "null"
+                listOf(
+                    "heading_deg   = $heading",
+                    "raw_x         = ${it.rawX}",
+                    "raw_y         = ${it.rawY}",
+                    "raw_z         = ${it.rawZ}",
+                    "temperature_c = %.2f".format(it.temperatureC),
+                )
+            },
+        )
+        Spacer(Modifier.height(12.dp))
+        SubFrameCard(
+            title = "WIND",
+            // Wind has TWO independent valid flags; show both rather than
+            // forcing a single chip. Pass null so the chip just shows "—"
+            // and let the body lines carry the per-channel state.
+            valid = null,
+            lines = ddl?.wind?.let {
+                listOf(
+                    "speed_valid     = ${it.speedValid}",
+                    "speed_mps       = %.2f".format(it.speedMps),
+                    "direction_valid = ${it.directionValid}",
+                    "direction_deg   = %.2f".format(it.directionDeg),
+                )
+            },
+        )
+
+        Spacer(Modifier.height(24.dp))
+        Lbl(text = "HISTORY · LAST ${history.size} FRAMES")
+        Spacer(Modifier.height(8.dp))
+        if (history.isEmpty()) {
+            Text(
+                text = "NO FRAMES RECEIVED",
+                color = t.inkMute,
+                fontSize = 11.sp,
+                letterSpacing = 0.14.em,
+                fontFamily = JetBrainsMono,
+            )
+        } else {
+            // Oldest first; reverse so newest sits at the top of the strip,
+            // which is what an operator scanning for "what just happened" wants.
+            history.asReversed().forEach { frame ->
+                HistoryRow(frame = frame)
+            }
+        }
+    }
+}
+
+@Composable
+private fun SubFrameCard(
+    title: String,
+    valid: Boolean?,
+    lines: List<String>?,
+) {
+    val t = LocalTactical.current
+    val chipText = when (valid) {
+        true -> "VALID"
+        false -> "INVALID"
+        null -> "—"
+    }
+    val chipTone = when (valid) {
+        true -> ChipTone.On
+        false -> ChipTone.Danger
+        null -> ChipTone.Dim
+    }
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(t.panel)
+            .border(1.dp, t.line)
+            .padding(16.dp),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Lbl(text = title)
+            Chip(text = chipText, tone = chipTone)
+        }
+        Spacer(Modifier.height(10.dp))
+        if (lines.isNullOrEmpty()) {
+            Text(
+                text = "(sub-frame absent)",
+                color = t.inkMute,
+                fontSize = 11.sp,
+                letterSpacing = 0.1.em,
+                fontFamily = JetBrainsMono,
+            )
+        } else {
+            lines.forEach { line ->
+                Text(
+                    text = line,
+                    color = t.ink,
+                    fontSize = 11.sp,
+                    letterSpacing = 0.06.em,
+                    fontFamily = JetBrainsMono,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun HistoryRow(frame: SensorData) {
+    val t = LocalTactical.current
+    val ddl = frame.ddlFrame
+    // Compact one-line summary — just enough to spot a trend across rows.
+    val dist = ddl?.distance?.takeIf { it.valid }?.distanceM?.let { "%.0fm".format(it) } ?: "—"
+    val temp = ddl?.temperatureHumidity?.takeIf { it.valid }?.temperatureC?.let { "%.0f°C".format(it) } ?: "—"
+    val heading = ddl?.compass?.takeIf { it.valid }?.headingDeg?.let { "%.0f°".format(it) } ?: "—"
+    val wind = ddl?.wind?.takeIf { it.speedValid }?.speedMps?.let { "%.1fm/s".format(it) } ?: "—"
+    val sats = ddl?.gps?.takeIf { it.valid }?.numSatellites?.let { "${it}sat" } ?: "—"
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .drawBehind {
+                drawLine(
+                    color = t.line,
+                    start = Offset(0f, size.height),
+                    end = Offset(size.width, size.height),
+                    strokeWidth = 1.dp.toPx(),
+                )
+            }
+            .padding(vertical = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = frame.timestamp.toString(),
+            color = t.inkDim,
+            fontSize = 10.sp,
+            letterSpacing = 0.06.em,
+            fontFamily = JetBrainsMono,
+            modifier = Modifier.width(140.dp),
+        )
+        HistoryCell(value = dist, width = 80.dp)
+        HistoryCell(value = temp, width = 70.dp)
+        HistoryCell(value = heading, width = 70.dp)
+        HistoryCell(value = wind, width = 90.dp)
+        HistoryCell(value = sats, width = 60.dp)
+    }
+}
+
+@Composable
+private fun HistoryCell(value: String, width: androidx.compose.ui.unit.Dp) {
+    val t = LocalTactical.current
+    Text(
+        text = value,
+        color = t.ink,
+        fontSize = 11.sp,
+        letterSpacing = 0.06.em,
+        fontFamily = JetBrainsMono,
+        modifier = Modifier.width(width),
+    )
 }
 
 // ----------------------------------------------------------------------------

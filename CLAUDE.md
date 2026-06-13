@@ -86,7 +86,9 @@ RPi5 ──WS:8555──► RaspberryPiClient ──StateFlow──► SniperRep
 Exposed from `SniperViewModel`:
 - `uiState: StateFlow<SniperUiState>` — `currentScreen`, `selectedDeviceId`, `selectedTargetId`, `previousScreen`, etc.
 - `availableDevices` — **hardcoded list of 4 devices** (Device 1–4) with fake GPS coords in the Negev region. Device 3 uses `WifiBinder.FALLBACK_GATEWAY` (`10.42.1.1`) as its IP — this is the real RPi.
-- `sensorData: StateFlow<SensorData?>`
+- `sensorData: StateFlow<SensorData?>` — RAW stream straight from the Pi; consumed by the Diagnostics LIVE SENSORS pane so the operator sees actual valid flags.
+- `latchedSensorData: StateFlow<SensorData?>` — sticky version of `sensorData`: each sub-frame holds its last VALID reading for up to `sensorLatchTimeoutMs` (default 5 s; tunable on `SniperViewModel`) before falling back to "—". Dashboard consumes this. Wind speed + direction latch independently (two valid flags), and the compass only latches when `heading_deg` is non-null so a missing heading is never substituted as `0°`.
+- `sensorHistory: StateFlow<List<SensorData>>` — rolling window of the last 10 raw frames (oldest first). Powers the Diagnostics LIVE SENSORS history strip.
 - `detectedTargets: StateFlow<List<DetectedTarget>>` — post-pacer/tracker output, NOT raw WS payload
 - `shootingSolution: StateFlow<ShootingSolution?>`
 - `systemStatus: StateFlow<SystemStatus>`

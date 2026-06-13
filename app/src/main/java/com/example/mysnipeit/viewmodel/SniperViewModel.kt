@@ -8,9 +8,11 @@ import com.example.mysnipeit.data.models.*
 import com.example.mysnipeit.data.network.WifiBinder
 import com.example.mysnipeit.data.repository.SniperRepository
 import com.google.android.gms.maps.model.LatLng
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import android.util.Log
 
@@ -136,6 +138,130 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     val detectedTargets: StateFlow<List<DetectedTarget>> = repository.detectedTargets
     val shootingSolution: StateFlow<ShootingSolution?> = repository.shootingSolution
     val systemStatus: StateFlow<SystemStatus> = repository.systemStatus
+
+    // --- Sensor latching + history -----------------------------------------
+    // When the Pi reports a sub-frame with valid=false, the dashboard would
+    // previously snap to "—". Operators asked for stickier behaviour: keep
+    // showing the last GOOD reading for a short grace window, then fall back
+    // to "—" only if the sensor stays invalid long enough that the cached
+    // value is no longer trustworthy.
+    //
+    // CHANGE THIS to tune how long a stale reading is held before the UI
+    // shows "—". Frames typically arrive at 1.5 s in mock mode (one Pi
+    // dispatch per cycle in startMockDataGeneration); the real Pi rate is
+    // whatever its firmware emits. 5 s ≈ ~3 missed mock frames.
+    val sensorLatchTimeoutMs: Long = 5_000L
+
+    private data class Latched<T>(val value: T, val timestamp: Long)
+    private var distanceLatch: Latched<DistanceFrame>? = null
+    private var tempHumLatch: Latched<TempHumidityFrame>? = null
+    private var servoLatch: Latched<ServoFrame>? = null
+    private var gpsLatch: Latched<GpsFrame>? = null
+    private var compassLatch: Latched<CompassFrame>? = null
+    // Wind speed and direction latch INDEPENDENTLY because the Pi has two
+    // separate valid flags (one channel can glitch while the other reads).
+    private var windSpeedLatch: Latched<Float>? = null
+    private var windDirectionLatch: Latched<Float>? = null
+
+    private val _latchedSensorData = MutableStateFlow<SensorData?>(null)
+    /**
+     * SensorData where each sub-frame is the most recent VALID reading,
+     * held for up to [sensorLatchTimeoutMs]. Consumed by the dashboard so a
+     * momentary `valid=false` glitch doesn't blank a cell. Diagnostics
+     * reads the raw [sensorData] so the operator can still see actual flag
+     * state straight from the Pi.
+     */
+    val latchedSensorData: StateFlow<SensorData?> = _latchedSensorData.asStateFlow()
+
+    private val _sensorHistory = MutableStateFlow<List<SensorData>>(emptyList())
+    /**
+     * Rolling window of the last [SENSOR_HISTORY_SIZE] raw sensor frames
+     * (oldest first). Powers the Diagnostics → LIVE SENSORS panel. Updated
+     * only when a NEW frame arrives — not on the periodic timeout sweep.
+     */
+    val sensorHistory: StateFlow<List<SensorData>> = _sensorHistory.asStateFlow()
+
+    init {
+        // Build the latched stream on every new raw frame so the UI gets
+        // an immediate update without waiting for the next 500ms tick.
+        viewModelScope.launch {
+            repository.sensorData.collect { frame ->
+                if (frame != null) {
+                    val history = _sensorHistory.value + frame
+                    _sensorHistory.value = if (history.size > SENSOR_HISTORY_SIZE)
+                        history.takeLast(SENSOR_HISTORY_SIZE) else history
+                }
+                applyLatchAndEmit()
+            }
+        }
+        // Periodic sweep enforces the timeout even when the Pi has gone
+        // silent OR keeps re-sending the same valid=false frame.
+        viewModelScope.launch {
+            while (isActive) {
+                delay(500)
+                applyLatchAndEmit()
+            }
+        }
+    }
+
+    private fun applyLatchAndEmit() {
+        val raw = repository.sensorData.value
+        val ddl = raw?.ddlFrame
+        val now = System.currentTimeMillis()
+
+        // Refresh each latch from the current frame ----------------------
+        ddl?.distance?.let { if (it.valid) distanceLatch = Latched(it, now) }
+        ddl?.temperatureHumidity?.let { if (it.valid) tempHumLatch = Latched(it, now) }
+        // Servo has no valid flag — when the sub-frame is present, latch it.
+        ddl?.servo?.let { servoLatch = Latched(it, now) }
+        ddl?.gps?.let { if (it.valid) gpsLatch = Latched(it, now) }
+        // Compass only latches when both `valid` AND headingDeg are non-null
+        // (matches the rule in compassHeadingDeg() — a missing heading must
+        // never be silently substituted as 0° / true north).
+        ddl?.compass?.let { if (it.valid && it.headingDeg != null) compassLatch = Latched(it, now) }
+        ddl?.wind?.let {
+            if (it.speedValid) windSpeedLatch = Latched(it.speedMps, now)
+            if (it.directionValid) windDirectionLatch = Latched(it.directionDeg, now)
+        }
+
+        // Expire stale latches ------------------------------------------
+        if (distanceLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) distanceLatch = null
+        if (tempHumLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) tempHumLatch = null
+        if (servoLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) servoLatch = null
+        if (gpsLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) gpsLatch = null
+        if (compassLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) compassLatch = null
+        if (windSpeedLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) windSpeedLatch = null
+        if (windDirectionLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) windDirectionLatch = null
+
+        // Compose the latched SensorData. Sub-frames carry valid=true when
+        // a latched value exists, so the helper extensions in SensorData.kt
+        // don't need to change.
+        val latchedWind = if (windSpeedLatch != null || windDirectionLatch != null) {
+            WindFrame(
+                speedValid = windSpeedLatch != null,
+                speedMps = windSpeedLatch?.value ?: 0f,
+                directionValid = windDirectionLatch != null,
+                directionDeg = windDirectionLatch?.value ?: 0f,
+            )
+        } else null
+
+        _latchedSensorData.value = SensorData(
+            type = raw?.type ?: "sensor_data",
+            timestamp = raw?.timestamp ?: now,
+            ddlFrame = DdlFrame(
+                distance = distanceLatch?.value,
+                temperatureHumidity = tempHumLatch?.value,
+                servo = servoLatch?.value,
+                gps = gpsLatch?.value,
+                compass = compassLatch?.value,
+                wind = latchedWind,
+            ),
+        )
+    }
+
+    private companion object {
+        const val SENSOR_HISTORY_SIZE = 10
+    }
 
     fun navigateToDeviceList() {
         _uiState.value = _uiState.value.copy(currentScreen = AppScreen.DEVICE_SELECTION)

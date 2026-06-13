@@ -100,7 +100,11 @@ class MainActivity : ComponentActivity() {
 fun SniperApp(viewModel: SniperViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val availableDevices by viewModel.availableDevices.collectAsStateWithLifecycle()
+    // Raw stream — drives the Diagnostics LIVE SENSORS pane (operator sees
+    // actual valid flags from the Pi). Dashboard uses the latched version.
     val sensorData by viewModel.sensorData.collectAsStateWithLifecycle()
+    val latchedSensorData by viewModel.latchedSensorData.collectAsStateWithLifecycle()
+    val sensorHistory by viewModel.sensorHistory.collectAsStateWithLifecycle()
     val detectedTargets by viewModel.detectedTargets.collectAsStateWithLifecycle()
     val shootingSolution by viewModel.shootingSolution.collectAsStateWithLifecycle()
     val systemStatus by viewModel.systemStatus.collectAsStateWithLifecycle()
@@ -160,7 +164,7 @@ fun SniperApp(viewModel: SniperViewModel) {
 
         AppScreen.DASHBOARD -> {
             DashboardScreen(
-                sensorData = sensorData,
+                sensorData = latchedSensorData,
                 detectedTargets = detectedTargets,
                 shootingSolution = shootingSolution,
                 systemStatus = systemStatus,
@@ -214,6 +218,8 @@ fun SniperApp(viewModel: SniperViewModel) {
         AppScreen.DIAGNOSTICS -> {
             DiagnosticsScreen(
                 onBackClick = { viewModel.navigateToHome() },
+                sensorData = sensorData,
+                sensorHistory = sensorHistory,
                 isDarkTheme = darkTheme,
                 onToggleTheme = { viewModel.toggleTheme() },
             )
