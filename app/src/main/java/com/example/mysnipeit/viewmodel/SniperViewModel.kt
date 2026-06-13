@@ -90,6 +90,37 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
         Log.w("SniperViewModel", "Location permission denied — userLocation will stay null")
     }
 
+    // --- Forced mock mode (Diagnostics → MOCK MODE) -------------------------
+    // Lets the operator test the ballistic calculator end-to-end without a
+    // Pi. The mock Pi's anchor is kept in sync with the operator's own GPS
+    // so the calculator stays in range regardless of where the device is.
+    private val _forceMockMode = MutableStateFlow(false)
+    val forceMockMode: StateFlow<Boolean> = _forceMockMode.asStateFlow()
+
+    init {
+        // Push the operator's latest GPS into the repository so the mock
+        // generator always picks up a fresh anchor on its next tick.
+        viewModelScope.launch {
+            combine(userLocation, userAltitudeM) { latLng, alt -> latLng to alt }
+                .collect { (latLng, alt) ->
+                    repository.setMockAnchor(latLng?.latitude, latLng?.longitude, alt)
+                }
+        }
+    }
+
+    fun setForceMockMode(enabled: Boolean) {
+        if (_forceMockMode.value == enabled) return
+        _forceMockMode.value = enabled
+        if (enabled) {
+            // Tear down any real Pi connection — mock writes would race
+            // with WS writes otherwise — and start the mock generator.
+            WifiBinder.release(getApplication<Application>().applicationContext)
+            repository.startForcedMock()
+        } else {
+            repository.stopForcedMock()
+        }
+    }
+
     // All 4 devices
     private val _availableDevices = MutableStateFlow(
         listOf(

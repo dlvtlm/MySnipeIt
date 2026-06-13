@@ -100,6 +100,47 @@ class RaspberryPiClient {
     // Mock data generator
     private var mockDataJob: Job? = null
 
+    // --- Forced mock anchor -------------------------------------------------
+    // When force-mock mode is enabled from the Diagnostics screen, the mock
+    // Pi is "placed" relative to this anchor (typically the sniper's own
+    // GPS) so the ballistic calculator works regardless of where the
+    // operator is testing from. If the anchor is null, the generator falls
+    // back to a fixed Negev test position.
+    @Volatile private var mockAnchorLatDeg: Double? = null
+    @Volatile private var mockAnchorLonDeg: Double? = null
+    @Volatile private var mockAnchorAltM: Double? = null
+
+    /** Update the mock Pi's anchor. Safe to call at any time. */
+    fun setMockAnchor(latDeg: Double?, lonDeg: Double?, altM: Double?) {
+        mockAnchorLatDeg = latDeg
+        mockAnchorLonDeg = lonDeg
+        mockAnchorAltM = altM
+    }
+
+    /**
+     * Operator-triggered "force mock" — used by Diagnostics → MOCK MODE
+     * to run the full sensor stream without a Pi. Tears down any live WS
+     * first so there are no two writers racing on _sensorData.
+     */
+    fun startForcedMock() {
+        Log.d(TAG, "Forced mock mode ENABLED")
+        webSocketClient?.close()
+        webSocketClient = null
+        stopKeepalive()
+        startMockDataGeneration()
+        updateSystemStatus(ConnectionState.CONNECTED)
+    }
+
+    /** Stop the forced mock generator. Does NOT reconnect to a real Pi. */
+    fun stopForcedMock() {
+        Log.d(TAG, "Forced mock mode DISABLED")
+        mockDataJob?.cancel()
+        mockDataJob = null
+        _sensorData.value = null
+        _detectedTargets.value = emptyList()
+        updateSystemStatus(ConnectionState.DISCONNECTED)
+    }
+
     // --- Detection pacing (A) -----------------------------------------------
     // Bursts on the WS (e.g. Pi sending 130 detections in 300ms) get smoothed
     // by a single consumer coroutine that drains to the most-recent item and
@@ -416,13 +457,25 @@ class RaspberryPiClient {
                 //    the Pi's new ddl_frame format. Servo is omitted (it's
                 //    not displayed on the dashboard and only matters once the
                 //    ballistics calc is wired up).
+                // Place the mock Pi ~100 m east of the anchor (typically the
+                // sniper's own GPS). If no anchor is set we fall back to a
+                // fixed Negev test point — the ballistic card will only
+                // populate if the actual sniper GPS is within range of it.
+                val anchorLat = mockAnchorLatDeg ?: 31.515
+                val anchorLon = mockAnchorLonDeg ?: 34.530
+                val anchorAlt = mockAnchorAltM ?: 100.0
+                val cosLat = Math.cos(Math.toRadians(anchorLat))
+                val piLatDeg = anchorLat
+                val piLonDeg = anchorLon + Math.toDegrees(100.0 / (6_371_000.0 * cosLat))
+
                 _sensorData.value = SensorData(
                     type = "sensor_data",
                     timestamp = System.currentTimeMillis(),
                     ddlFrame = DdlFrame(
                         distance = DistanceFrame(
                             valid = true,
-                            distanceM = (400f + Math.random().toFloat() * 200f),
+                            // 300 m–600 m engagement window
+                            distanceM = (300f + Math.random().toFloat() * 300f),
                             status = 0,
                             precision = 1,
                             strength = 1200,
@@ -432,14 +485,22 @@ class RaspberryPiClient {
                             temperatureC = (20f + Math.random().toFloat() * 10f),
                             humidityPct = (50f + Math.random().toFloat() * 20f),
                         ),
-                        servo = null,
+                        // Servo MUST be non-null for the ballistic localizer
+                        // to produce a result. Mostly-forward / mostly-level
+                        // with small jitter so the dashboard's pointing
+                        // direction changes frame-to-frame without being
+                        // chaotic.
+                        servo = ServoFrame(
+                            horizontalDeg = 90f + (Math.random().toFloat() - 0.5f) * 30f,
+                            verticalDeg = 90f + (Math.random().toFloat() - 0.5f) * 10f,
+                        ),
                         gps = GpsFrame(
                             valid = true,
                             fixType = 3,
                             numSatellites = 9,
-                            latitudeDeg = 31.51 + Math.random() * 0.02,
-                            longitudeDeg = 34.52 + Math.random() * 0.02,
-                            altitudeM = 35.0,
+                            latitudeDeg = piLatDeg,
+                            longitudeDeg = piLonDeg,
+                            altitudeM = anchorAlt,
                             hAccM = 1.4,
                         ),
                         compass = CompassFrame(

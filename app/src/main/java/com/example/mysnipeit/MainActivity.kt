@@ -128,6 +128,11 @@ fun SniperApp(viewModel: SniperViewModel) {
     val selectedCartridge by viewModel.selectedCartridge.collectAsStateWithLifecycle()
     val selectedRifle by viewModel.selectedRifle.collectAsStateWithLifecycle()
 
+    // Diagnostics → MOCK MODE toggle. When ON the app streams synthetic
+    // sensor data anchored to the operator's GPS so the ballistic
+    // calculator can be tested without a Pi.
+    val forceMockMode by viewModel.forceMockMode.collectAsStateWithLifecycle()
+
     when (uiState.currentScreen) {
         AppScreen.HOME -> {
             HomeScreen(
@@ -220,6 +225,8 @@ fun SniperApp(viewModel: SniperViewModel) {
                 onBackClick = { viewModel.navigateToHome() },
                 sensorData = sensorData,
                 sensorHistory = sensorHistory,
+                forceMockMode = forceMockMode,
+                onForceMockModeChange = { viewModel.setForceMockMode(it) },
                 isDarkTheme = darkTheme,
                 onToggleTheme = { viewModel.toggleTheme() },
             )

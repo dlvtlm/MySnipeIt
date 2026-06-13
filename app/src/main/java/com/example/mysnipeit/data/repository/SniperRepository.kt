@@ -108,4 +108,16 @@ class SniperRepository {
     fun isConnected(): Boolean {
         return raspberryPiClient.isConnected()
     }
+
+    // --- Forced mock mode (Diagnostics → MOCK MODE) -------------------------
+    // Drives the offline ballistic-calculator test path. The viewmodel keeps
+    // the mock anchor updated with the operator's own GPS so the mock Pi
+    // stays in range of whichever city you're testing from.
+
+    fun setMockAnchor(latDeg: Double?, lonDeg: Double?, altM: Double?) =
+        raspberryPiClient.setMockAnchor(latDeg, lonDeg, altM)
+
+    fun startForcedMock() = raspberryPiClient.startForcedMock()
+
+    fun stopForcedMock() = raspberryPiClient.stopForcedMock()
 }

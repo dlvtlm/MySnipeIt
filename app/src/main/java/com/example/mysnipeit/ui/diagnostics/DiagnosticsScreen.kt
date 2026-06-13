@@ -44,13 +44,15 @@ import kotlinx.coroutines.launch
  *                  plus a rolling history) — replaces the old TELEMETRY
  *                  placeholder that never had an implementation.
  */
-private enum class DiagSection { CONNECTIVITY, LIVE_SENSORS }
+private enum class DiagSection { CONNECTIVITY, LIVE_SENSORS, MOCK_MODE }
 
 @Composable
 fun DiagnosticsScreen(
     onBackClick: () -> Unit,
     sensorData: SensorData?,
     sensorHistory: List<SensorData>,
+    forceMockMode: Boolean,
+    onForceMockModeChange: (Boolean) -> Unit,
     isDarkTheme: Boolean = true,
     onToggleTheme: () -> Unit = {},
     viewModel: DiagnosticsViewModel = viewModel(),
@@ -87,6 +89,10 @@ fun DiagnosticsScreen(
                     sensorData = sensorData,
                     history = sensorHistory,
                 )
+                DiagSection.MOCK_MODE -> MockModePane(
+                    enabled = forceMockMode,
+                    onToggle = onForceMockModeChange,
+                )
             }
         }
     }
@@ -95,11 +101,11 @@ fun DiagnosticsScreen(
 // ----------------------------------------------------------------------------
 // Sidebar
 //
-// Two live sections now: CONNECTIVITY (the original ping/port-scan flow) and
-// LIVE SENSORS (raw sensor stream + rolling history; replaces the old
-// TELEMETRY placeholder, which was never implemented). MOCK MODE placeholder
-// was removed — no concrete plan for it. The BACK button lives in the TopBar
-// for cross-screen consistency.
+// Three live sections: CONNECTIVITY (ping/port-scan), LIVE SENSORS (raw
+// sensor stream + history; replaces the old TELEMETRY placeholder), and
+// MOCK MODE (force-on the mock data generator so the ballistic calculator
+// can be tested without a Pi). The BACK button lives in the TopBar for
+// cross-screen consistency.
 // ----------------------------------------------------------------------------
 @Composable
 private fun DiagSidebar(
@@ -134,6 +140,12 @@ private fun DiagSidebar(
             label = "LIVE SENSORS",
             active = active == DiagSection.LIVE_SENSORS,
             onClick = { onSelect(DiagSection.LIVE_SENSORS) },
+        )
+        Spacer(Modifier.height(4.dp))
+        DiagNavItem(
+            label = "MOCK MODE",
+            active = active == DiagSection.MOCK_MODE,
+            onClick = { onSelect(DiagSection.MOCK_MODE) },
         )
     }
 }
@@ -507,6 +519,112 @@ private fun HistoryCell(value: String, width: androidx.compose.ui.unit.Dp) {
         fontFamily = JetBrainsMono,
         modifier = Modifier.width(width),
     )
+}
+
+// ----------------------------------------------------------------------------
+// MOCK MODE pane
+//
+// Force-enables the in-app mock data generator so the ballistic calculator
+// can be tested without a Pi. The mock Pi is anchored to the operator's
+// own GPS (placed ~100 m east of it), so wherever the device is, the
+// firing-solution card on the dashboard will populate with a target ~400 m
+// out at a randomised compass bearing / wind / atmosphere each tick.
+//
+// Toggling ON tears down any live Pi connection first. Toggling OFF stops
+// the generator but does NOT auto-reconnect — pick a device again from
+// the device-selection screen if you want to go back to real data.
+// ----------------------------------------------------------------------------
+@Composable
+private fun MockModePane(
+    enabled: Boolean,
+    onToggle: (Boolean) -> Unit,
+) {
+    val t = LocalTactical.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 28.dp, vertical = 24.dp)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column {
+                Lbl(text = "OFFLINE · BALLISTIC CALC TEST PATH")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "MOCK MODE",
+                    color = t.ink,
+                    fontSize = 22.sp,
+                    letterSpacing = 0.06.em,
+                    fontFamily = JetBrainsMono,
+                )
+            }
+            Chip(
+                text = if (enabled) "ON" else "OFF",
+                tone = if (enabled) ChipTone.On else ChipTone.Dim,
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(t.panel)
+                .border(1.dp, t.line)
+                .padding(20.dp),
+        ) {
+            Lbl(text = "DATA SOURCE")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = if (enabled) "MOCK STREAM ACTIVE — DASHBOARD IS SHOWING SYNTHETIC SENSORS."
+                else "DISABLED — DASHBOARD USES LIVE PI STREAM (OR FALLBACK MOCK ON CONNECT FAILURE).",
+                color = t.ink,
+                fontSize = 11.sp,
+                letterSpacing = 0.1.em,
+                fontFamily = JetBrainsMono,
+            )
+            Spacer(Modifier.height(16.dp))
+            MonoButton(
+                label = if (enabled) "DISABLE MOCK" else "ENABLE MOCK",
+                primary = !enabled,
+                enabled = true,
+                onClick = { onToggle(!enabled) },
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(t.panel)
+                .border(1.dp, t.line)
+                .padding(20.dp),
+        ) {
+            Lbl(text = "WHAT THE MOCK EMITS")
+            Spacer(Modifier.height(10.dp))
+            listOf(
+                "Pi GPS  — 100 m east of the operator's GPS (or Negev test point if no fix yet)",
+                "Compass — random heading every 1.5 s, always VALID",
+                "Servo   — pan 90° ±15°, tilt 90° ±5° (mostly forward, near-level)",
+                "Range   — 300 m to 600 m random slant distance",
+                "Wind    — 0–8 m/s, random direction (both channels VALID)",
+                "Atmos.  — 20–30 °C, 50–70 % RH",
+                "Targets — 2 mock detections (T1 HUMAN, T2 VEHICLE) over a mock video",
+            ).forEach { line ->
+                Text(
+                    text = "•  $line",
+                    color = t.ink,
+                    fontSize = 11.sp,
+                    letterSpacing = 0.06.em,
+                    fontFamily = JetBrainsMono,
+                    modifier = Modifier.padding(vertical = 2.dp),
+                )
+            }
+        }
+    }
 }
 
 // ----------------------------------------------------------------------------

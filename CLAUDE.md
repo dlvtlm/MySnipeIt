@@ -100,6 +100,7 @@ Exposed from `SniperViewModel`:
 - `userLocation: StateFlow<LatLng?>` — device GPS, null until permission granted + first fix
 - `darkTheme: StateFlow<Boolean>` — persisted to SharedPreferences
 - `selectedCartridge: StateFlow<CartridgeProfile>` + `selectedRifle: StateFlow<RifleProfile>` — ballistic loadout, persisted to SharedPreferences, chosen via dashboard MENU → Loadout (`LoadoutDialog`). Presets live in `BallisticProfiles`.
+- `forceMockMode: StateFlow<Boolean>` — operator-triggered offline test path; setter `setForceMockMode(true)` disconnects from any real Pi and starts the in-app mock generator. Wired to Diagnostics → MOCK MODE. The mock anchors the synthetic Pi ~100 m east of the operator's own GPS so the ballistic calculator stays in range regardless of where the device is.
 
 ### Navigation
 
