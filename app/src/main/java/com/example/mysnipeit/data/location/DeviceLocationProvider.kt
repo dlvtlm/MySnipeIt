@@ -36,10 +36,19 @@ class DeviceLocationProvider(context: Context) {
     private val _location = MutableStateFlow<LatLng?>(null)
     val location: StateFlow<LatLng?> = _location.asStateFlow()
 
+    // Altitude in metres, MSL when the underlying GPS provider reports it.
+    // Null when the fix has no vertical component (some indoor / cellular-
+    // assisted fixes don't include altitude). The ballistic solver tolerates
+    // null by falling back to the target's altitude (treats the shot as
+    // level), so this flow stays null rather than guessing.
+    private val _altitudeM = MutableStateFlow<Double?>(null)
+    val altitudeM: StateFlow<Double?> = _altitudeM.asStateFlow()
+
     private val callback = object : LocationCallback() {
         override fun onLocationResult(result: LocationResult) {
             result.lastLocation?.let { loc ->
                 _location.value = LatLng(loc.latitude, loc.longitude)
+                _altitudeM.value = if (loc.hasAltitude()) loc.altitude else null
             }
         }
     }
@@ -55,6 +64,7 @@ class DeviceLocationProvider(context: Context) {
         client.lastLocation.addOnSuccessListener { loc: Location? ->
             if (loc != null && _location.value == null) {
                 _location.value = LatLng(loc.latitude, loc.longitude)
+                if (loc.hasAltitude()) _altitudeM.value = loc.altitude
                 Log.d(TAG, "Seeded with last known location: ${loc.latitude}, ${loc.longitude}")
             }
         }

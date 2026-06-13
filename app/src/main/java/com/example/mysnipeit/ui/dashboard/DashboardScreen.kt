@@ -14,10 +14,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
+import com.example.mysnipeit.data.ballistics.FiringSolution
 import com.example.mysnipeit.data.models.ConnectionState
 import com.example.mysnipeit.data.models.DetectedTarget
 import com.example.mysnipeit.data.models.SensorData
-import com.example.mysnipeit.data.models.ShootingSolution
 import com.example.mysnipeit.data.models.SystemStatus
 import com.example.mysnipeit.data.models.distanceM
 import com.example.mysnipeit.data.models.gpsLatLon
@@ -47,7 +47,7 @@ import com.example.mysnipeit.ui.theme.*
 fun DashboardScreen(
     sensorData: SensorData?,
     detectedTargets: List<DetectedTarget>,
-    shootingSolution: ShootingSolution?,
+    firingSolution: FiringSolution?,
     systemStatus: SystemStatus,
     selectedTargetId: String?,
     streamReady: Boolean,
@@ -105,7 +105,7 @@ fun DashboardScreen(
         ) {
             TacticalVideoPlayer(
                 detectedTargets = detectedTargets,
-                shootingSolution = shootingSolution,
+                firingSolution = firingSolution,
                 selectedTargetId = selectedTargetId,
                 connectionState = systemStatus.connectionStatus,
                 streamReady = streamReady,
@@ -125,12 +125,12 @@ fun DashboardScreen(
                     .padding(16.dp),
             )
 
-            // Top-right: firing-solution card (shown only when a target is locked)
-            if (lockedTarget != null && shootingSolution != null) {
+            // Top-right: firing-solution card (shown only when a target is
+            // locked AND the app's calculator has produced a valid solution).
+            if (lockedTarget != null && firingSolution != null) {
                 FiringSolutionCard(
                     targetId = lockedTarget.id,
-                    solution = shootingSolution,
-                    rangefinder = sensorData.distanceM()?.toDouble(),
+                    solution = firingSolution,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
                         .padding(16.dp)
@@ -265,13 +265,15 @@ private fun TargetRailRow(target: DetectedTarget, isLocked: Boolean) {
 }
 
 // ----------------------------------------------------------------------------
-// Firing solution card (top-right) — only shown when a target is locked
+// Firing solution card (top-right) — shown when a target is locked AND
+// the app's ballistic calculator has produced a valid solution. All angles
+// are degrees (no MIL / MOA); the elevation field is the HOLD-OVER above
+// the target the operator should apply, not the absolute muzzle elevation.
 // ----------------------------------------------------------------------------
 @Composable
 private fun FiringSolutionCard(
     targetId: String,
-    solution: ShootingSolution,
-    rangefinder: Double?,
+    solution: FiringSolution,
     modifier: Modifier = Modifier,
 ) {
     val t = LocalTactical.current
@@ -301,37 +303,36 @@ private fun FiringSolutionCard(
         Column(modifier = Modifier.padding(16.dp)) {
             Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
                 Stat(
-                    label = "Azimuth",
-                    value = "${solution.azimuth.toInt()}°",
-                    modifier = Modifier.weight(1f),
-                )
-                Stat(
-                    label = "Elevation",
-                    value = "${if (solution.elevation >= 0) "+" else ""}${solution.elevation.toInt()}°",
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Stat(
-                    label = "Windage",
-                    value = String.format("%.1f", solution.windageAdjustment),
-                    unit = "MIL",
-                    modifier = Modifier.weight(1f),
-                )
-                Stat(
-                    label = "Drop",
-                    value = String.format("%.1f", solution.elevationAdjustment),
-                    unit = "MIL",
-                    modifier = Modifier.weight(1f),
-                )
-            }
-            Spacer(Modifier.height(12.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Stat(
                     label = "Range",
-                    value = rangefinder?.toInt()?.toString() ?: "—",
+                    value = "${solution.rangeM.toInt()}",
                     unit = "m",
+                    modifier = Modifier.weight(1f),
+                )
+                Stat(
+                    label = "Azimuth",
+                    value = "${solution.azimuthDeg.toInt()}°",
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Stat(
+                    label = "Hold ↑",
+                    value = formatAngleDeg(solution.elevationDeg),
+                    modifier = Modifier.weight(1f),
+                )
+                Stat(
+                    label = "Hold →",
+                    value = formatAngleDeg(solution.windageDeg),
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
+                Stat(
+                    label = "TOF",
+                    value = String.format("%.2f", solution.timeOfFlightS),
+                    unit = "s",
                     modifier = Modifier.weight(1f),
                 )
                 Stat(
@@ -342,6 +343,18 @@ private fun FiringSolutionCard(
             }
         }
     }
+}
+
+/**
+ * Format an angle for the HUD. Sub-degree values get one decimal (so a
+ * 100 m shot reads "+0.1°" rather than "+0°"); larger holds round to the
+ * integer degree to keep the card tight.
+ */
+private fun formatAngleDeg(deg: Double): String {
+    val sign = if (deg >= 0) "+" else "−"
+    val mag = Math.abs(deg)
+    return if (mag < 10.0) "$sign${String.format("%.1f", mag)}°"
+    else "$sign${mag.toInt()}°"
 }
 
 // ----------------------------------------------------------------------------

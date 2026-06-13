@@ -35,8 +35,8 @@ import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
 import androidx.media3.ui.PlayerView
 import com.example.mysnipeit.R
+import com.example.mysnipeit.data.ballistics.FiringSolution
 import com.example.mysnipeit.data.models.DetectedTarget
-import com.example.mysnipeit.data.models.ShootingSolution
 import com.example.mysnipeit.ui.components.TacticalCompass
 import com.example.mysnipeit.ui.theme.*
 import kotlinx.coroutines.delay
@@ -50,7 +50,7 @@ private const val VIDEO_HEIGHT = 1080f
 @Composable
 fun TacticalVideoPlayer(
     detectedTargets: List<DetectedTarget>,
-    shootingSolution: ShootingSolution?,
+    firingSolution: FiringSolution?,
     selectedTargetId: String?,
     connectionState: ConnectionState,
     streamReady: Boolean,
@@ -239,17 +239,20 @@ fun TacticalVideoPlayer(
                 )
             }
 
-            //   3D Tactical Compass (bottom-left)
-            if (shootingSolution != null && selectedTargetId != null) {
+            //   3D Tactical Compass (bottom-left). Visualises the
+            //   app-computed firing solution: arrow points along the bearing
+            //   to the target; the vertical tilt is the operator's
+            //   hold-over (positive = aim above the target).
+            if (firingSolution != null && selectedTargetId != null) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
                         .padding(16.dp)
                 ) {
                     TacticalCompass(
-                        azimuth = shootingSolution.azimuth,
-                        elevation = shootingSolution.elevation,
-                        confidence = shootingSolution.confidence
+                        azimuth = firingSolution.azimuthDeg,
+                        elevation = firingSolution.elevationDeg,
+                        confidence = firingSolution.confidence
                     )
                 }
             }

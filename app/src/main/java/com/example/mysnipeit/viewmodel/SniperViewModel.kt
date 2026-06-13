@@ -3,6 +3,9 @@ package com.example.mysnipeit.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.mysnipeit.data.ballistics.FiringSolution
+import com.example.mysnipeit.data.ballistics.localizeTarget
+import com.example.mysnipeit.data.ballistics.solveFiringSolution
 import com.example.mysnipeit.data.location.DeviceLocationProvider
 import com.example.mysnipeit.data.models.*
 import com.example.mysnipeit.data.network.WifiBinder
@@ -10,8 +13,11 @@ import com.example.mysnipeit.data.repository.SniperRepository
 import com.google.android.gms.maps.model.LatLng
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import android.util.Log
@@ -71,6 +77,7 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     //  - (future) Ballistics calculator as one of its inputs
     private val locationProvider = DeviceLocationProvider(application.applicationContext)
     val userLocation: StateFlow<LatLng?> = locationProvider.location
+    val userAltitudeM: StateFlow<Double?> = locationProvider.altitudeM
 
     /** Called by MainActivity after the user grants ACCESS_FINE_LOCATION. */
     fun onLocationPermissionGranted() {
@@ -136,7 +143,10 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     // Data from repository
     val sensorData: StateFlow<SensorData?> = repository.sensorData
     val detectedTargets: StateFlow<List<DetectedTarget>> = repository.detectedTargets
-    val shootingSolution: StateFlow<ShootingSolution?> = repository.shootingSolution
+    // NOTE: We no longer consume the Pi's shooting_solution — the app
+    // computes its own from latchedSensorData + sniper GPS + loadout (see
+    // [firingSolution] below). The repository flow stays in place in case
+    // the Pi still sends it; it just isn't exposed to the UI anymore.
     val systemStatus: StateFlow<SystemStatus> = repository.systemStatus
 
     // --- Sensor latching + history -----------------------------------------
@@ -180,6 +190,66 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
      * only when a NEW frame arrives — not on the periodic timeout sweep.
      */
     val sensorHistory: StateFlow<List<SensorData>> = _sensorHistory.asStateFlow()
+
+    /**
+     * App-computed firing solution. Recomputes any time the latched sensor
+     * stream changes, the sniper's GPS updates, or the operator swaps the
+     * cartridge / rifle profile. Null when there aren't enough inputs to
+     * localise the target (e.g. compass hasn't fixed) or when the target is
+     * out of range for the loadout.
+     *
+     * The two-piece pipeline:
+     *   latched Pi sensors  ──►  localizeTarget  ──► target world coords
+     *   sniper GPS + loadout + atmosphere ──► solveFiringSolution
+     *
+     * Replaces the Pi-sourced ShootingSolution that used to drive the
+     * dashboard's firing-solution card.
+     */
+    val firingSolution: StateFlow<FiringSolution?> = combine(
+        latchedSensorData,
+        userLocation,
+        userAltitudeM,
+        selectedCartridge,
+        selectedRifle,
+    ) { sensor, sniperLatLng, sniperAlt, cart, rifle ->
+        computeFiringSolution(sensor, sniperLatLng, sniperAlt, cart, rifle)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private fun computeFiringSolution(
+        sensor: SensorData?,
+        sniperLatLng: LatLng?,
+        sniperAltM: Double?,
+        cart: CartridgeProfile,
+        rifle: RifleProfile,
+    ): FiringSolution? {
+        if (sniperLatLng == null) return null
+        // Pi POV → target world coordinates. Returns null if compass / GPS /
+        // rangefinder aren't all available — that's the right behaviour;
+        // a missing input must not become a 0° silent substitution.
+        val target = localizeTarget(
+            piGps = sensor?.ddlFrame?.gps,
+            compassHeadingDeg = sensor.compassHeadingDeg(),
+            servoHorizontalDeg = sensor.servoHorizontalDeg(),
+            servoVerticalDeg = sensor.servoVerticalDeg(),
+            rangefinderDistanceM = sensor.distanceM(),
+        ) ?: return null
+        // Sniper POV → firing solution. Fall back to the target's altitude
+        // when the tablet's GPS has no vertical fix (treats the shot as
+        // level, which is the least-bad assumption short of guessing).
+        val tempHum = sensor?.ddlFrame?.temperatureHumidity?.takeIf { it.valid }
+        return solveFiringSolution(
+            sniperLatDeg = sniperLatLng.latitude,
+            sniperLonDeg = sniperLatLng.longitude,
+            sniperAltM = sniperAltM ?: target.altitudeM,
+            target = target,
+            cartridge = cart,
+            rifle = rifle,
+            windSpeedMps = sensor.windSpeedMps(),
+            windDirectionDeg = sensor.windDirectionDeg(),
+            temperatureC = tempHum?.temperatureC,
+            humidityPct = tempHum?.humidityPct,
+        )
+    }
 
     init {
         // Build the latched stream on every new raw frame so the UI gets

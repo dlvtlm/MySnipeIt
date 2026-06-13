@@ -106,7 +106,7 @@ fun SniperApp(viewModel: SniperViewModel) {
     val latchedSensorData by viewModel.latchedSensorData.collectAsStateWithLifecycle()
     val sensorHistory by viewModel.sensorHistory.collectAsStateWithLifecycle()
     val detectedTargets by viewModel.detectedTargets.collectAsStateWithLifecycle()
-    val shootingSolution by viewModel.shootingSolution.collectAsStateWithLifecycle()
+    val firingSolution by viewModel.firingSolution.collectAsStateWithLifecycle()
     val systemStatus by viewModel.systemStatus.collectAsStateWithLifecycle()
     val selectedTargetId = uiState.selectedTargetId
     val streamReady by viewModel.streamReady.collectAsState()
@@ -166,7 +166,7 @@ fun SniperApp(viewModel: SniperViewModel) {
             DashboardScreen(
                 sensorData = latchedSensorData,
                 detectedTargets = detectedTargets,
-                shootingSolution = shootingSolution,
+                firingSolution = firingSolution,
                 systemStatus = systemStatus,
                 selectedTargetId = selectedTargetId,
                 streamReady = streamReady,

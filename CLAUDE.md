@@ -88,6 +88,8 @@ RPi5 ──WS:8555──► RaspberryPiClient ──StateFlow──► SniperRep
 Exposed from `SniperViewModel`:
 - `uiState: StateFlow<SniperUiState>` — `currentScreen`, `selectedDeviceId`, `selectedTargetId`, `previousScreen`, etc.
 - `availableDevices` — **hardcoded list of 4 devices** (Device 1–4) with fake GPS coords in the Negev region. Device 3 uses `WifiBinder.FALLBACK_GATEWAY` (`10.42.1.1`) as its IP — this is the real RPi.
+- `userAltitudeM: StateFlow<Double?>` — device altitude in metres MSL when the GPS fix has a vertical component; null otherwise. Fed into the firing-solution solver as the sniper's elevation.
+- `firingSolution: StateFlow<FiringSolution?>` — app-computed solution from `latchedSensorData` + `userLocation`/`userAltitudeM` + selected cartridge/rifle. Recomputes reactively via `combine()`. The Pi's `shooting_solution` WS message is still parsed by `RaspberryPiClient` but is NOT consumed by the UI — `firingSolution` replaces it.
 - `sensorData: StateFlow<SensorData?>` — RAW stream straight from the Pi; consumed by the Diagnostics LIVE SENSORS pane so the operator sees actual valid flags.
 - `latchedSensorData: StateFlow<SensorData?>` — sticky version of `sensorData`: each sub-frame holds its last VALID reading for up to `sensorLatchTimeoutMs` (default 5 s; tunable on `SniperViewModel`) before falling back to "—". Dashboard consumes this. Wind speed + direction latch independently (two valid flags), and the compass only latches when `heading_deg` is non-null so a missing heading is never substituted as `0°`.
 - `sensorHistory: StateFlow<List<SensorData>>` — rolling window of the last 10 raw frames (oldest first). Powers the Diagnostics LIVE SENSORS history strip.
