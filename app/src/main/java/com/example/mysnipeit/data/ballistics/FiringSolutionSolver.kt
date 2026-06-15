@@ -24,6 +24,11 @@ import kotlin.math.sqrt
  * @property rangeM           horizontal ground distance from sniper to target
  * @property slantRangeM      straight-line distance (3D)
  * @property azimuthDeg       true-north bearing from sniper, 0–360
+ * @property lookAngleDeg     angle from the sniper's horizon UP to the target's
+ *                            apparent position. + when the target is uphill,
+ *                            − when downhill. Used by the HUD compass to show
+ *                            "the target is this much above me", independent of
+ *                            the much smaller hold-over correction below.
  * @property elevationDeg     hold-over ABOVE the line of sight to the target.
  *                            The operator aims their reticle this far above
  *                            the target's apparent position. + up, − down.
@@ -38,6 +43,7 @@ data class FiringSolution(
     val rangeM: Double,
     val slantRangeM: Double,
     val azimuthDeg: Double,
+    val lookAngleDeg: Double,
     val elevationDeg: Double,
     val windageDeg: Double,
     val timeOfFlightS: Double,
@@ -183,6 +189,7 @@ fun solveFiringSolution(
         rangeM = groundRangeM,
         slantRangeM = slantRangeM,
         azimuthDeg = azimuthDeg,
+        lookAngleDeg = Math.toDegrees(lookAngleRad),
         elevationDeg = elevationDeg,
         windageDeg = windageDeg,
         timeOfFlightS = solution.tof,

@@ -239,10 +239,11 @@ fun TacticalVideoPlayer(
                 )
             }
 
-            //   3D Tactical Compass (bottom-left). Visualises the
-            //   app-computed firing solution: arrow points along the bearing
-            //   to the target; the vertical tilt is the operator's
-            //   hold-over (positive = aim above the target).
+            //   3D Tactical Compass (bottom-left). Visualises where the
+            //   target sits relative to the sniper: arrow rotated by the
+            //   true-north bearing, EL shows the look angle above the
+            //   sniper's horizon (positive = uphill, negative = downhill).
+            //   This is NOT the hold-over — the hold is on the firing card.
             if (firingSolution != null && selectedTargetId != null) {
                 Box(
                     modifier = Modifier
@@ -251,7 +252,7 @@ fun TacticalVideoPlayer(
                 ) {
                     TacticalCompass(
                         azimuth = firingSolution.azimuthDeg,
-                        elevation = firingSolution.elevationDeg,
+                        elevation = firingSolution.lookAngleDeg,
                         confidence = firingSolution.confidence
                     )
                 }

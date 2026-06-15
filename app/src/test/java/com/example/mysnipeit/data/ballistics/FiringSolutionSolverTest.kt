@@ -89,6 +89,19 @@ class FiringSolutionSolverTest {
         assertEquals(Math.hypot(500.0, 100.0), s.slantRangeM, 1.0)
     }
 
+    @Test
+    fun `look angle is positive uphill, negative downhill, zero on level`() {
+        // 500 m horizontal, 100 m up → atan2(100, 500) ≈ 11.31°
+        val up = solve(targetDueNorth(500.0).copy(altitudeM = sniperAlt + 100.0))!!
+        assertEquals(11.31, up.lookAngleDeg, 0.05)
+        // 500 m horizontal, 100 m down → ≈ −11.31°
+        val down = solve(targetDueNorth(500.0).copy(altitudeM = sniperAlt - 100.0))!!
+        assertEquals(-11.31, down.lookAngleDeg, 0.05)
+        // Level shot
+        val level = solve(targetDueNorth(500.0))!!
+        assertEquals(0.0, level.lookAngleDeg, 0.01)
+    }
+
     // --- Out-of-range / sanity null returns ----------------------------------
 
     @Test
