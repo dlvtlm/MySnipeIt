@@ -26,6 +26,7 @@ import com.example.mysnipeit.ui.device.DeviceSelectionScreen
 import com.example.mysnipeit.ui.map.MapScreen
 import com.example.mysnipeit.ui.dashboard.DashboardScreen
 import android.util.Log
+import com.example.mysnipeit.ui.dashboard.LoadoutDialog
 import com.example.mysnipeit.ui.diagnostics.DiagnosticsScreen
 
 class MainActivity : ComponentActivity() {
@@ -99,9 +100,13 @@ class MainActivity : ComponentActivity() {
 fun SniperApp(viewModel: SniperViewModel) {
     val uiState by viewModel.uiState.collectAsStateWithLifecycle()
     val availableDevices by viewModel.availableDevices.collectAsStateWithLifecycle()
+    // Raw stream — drives the Diagnostics LIVE SENSORS pane (operator sees
+    // actual valid flags from the Pi). Dashboard uses the latched version.
     val sensorData by viewModel.sensorData.collectAsStateWithLifecycle()
+    val latchedSensorData by viewModel.latchedSensorData.collectAsStateWithLifecycle()
+    val sensorHistory by viewModel.sensorHistory.collectAsStateWithLifecycle()
     val detectedTargets by viewModel.detectedTargets.collectAsStateWithLifecycle()
-    val shootingSolution by viewModel.shootingSolution.collectAsStateWithLifecycle()
+    val firingSolution by viewModel.firingSolution.collectAsStateWithLifecycle()
     val systemStatus by viewModel.systemStatus.collectAsStateWithLifecycle()
     val selectedTargetId = uiState.selectedTargetId
     val streamReady by viewModel.streamReady.collectAsState()
@@ -114,8 +119,22 @@ fun SniperApp(viewModel: SniperViewModel) {
     // ballistics will use it directly as a calculator input).
     val userLocation by viewModel.userLocation.collectAsStateWithLifecycle()
 
-    // Track menu state
-    var showMenu by remember { mutableStateOf(false) }
+    // Dashboard MENU dialog state lives in the ViewModel so it survives a
+    // round-trip into Diagnostics (operator hits MENU → Diagnostics → BACK
+    // and the menu reopens automatically). Loadout stays local — there's
+    // no navigation away from it.
+    val showMenu = uiState.dashboardMenuOpen
+    var showLoadout by remember { mutableStateOf(false) }
+
+    // Ballistic loadout — persisted cartridge + rifle profile picks; chosen
+    // via MENU → Loadout on the dashboard, consumed by the ballistic solver.
+    val selectedCartridge by viewModel.selectedCartridge.collectAsStateWithLifecycle()
+    val selectedRifle by viewModel.selectedRifle.collectAsStateWithLifecycle()
+
+    // Diagnostics → MOCK MODE toggle. When ON the app streams synthetic
+    // sensor data anchored to the operator's GPS so the ballistic
+    // calculator can be tested without a Pi.
+    val forceMockMode by viewModel.forceMockMode.collectAsStateWithLifecycle()
 
     when (uiState.currentScreen) {
         AppScreen.HOME -> {
@@ -153,9 +172,9 @@ fun SniperApp(viewModel: SniperViewModel) {
 
         AppScreen.DASHBOARD -> {
             DashboardScreen(
-                sensorData = sensorData,
+                sensorData = latchedSensorData,
                 detectedTargets = detectedTargets,
-                shootingSolution = shootingSolution,
+                firingSolution = firingSolution,
                 systemStatus = systemStatus,
                 selectedTargetId = selectedTargetId,
                 streamReady = streamReady,
@@ -171,27 +190,48 @@ fun SniperApp(viewModel: SniperViewModel) {
                 onConnectClick = { viewModel.connectToSystem() },
                 onDisconnectClick = { viewModel.disconnectFromSystem() },
                 onBackClick = { viewModel.goBackFromDashboard() },
-                onMenuClick = { showMenu = true },
+                onMenuClick = { viewModel.setDashboardMenuOpen(true) },
                 isDarkTheme = darkTheme,
                 onToggleTheme = { viewModel.toggleTheme() },
             )
 
             // Menu dropdown — same as before; gives the dashboard a way to
-            // reach Diagnostics without leaving the operator surface.
+            // reach Diagnostics and the Loadout picker without leaving the
+            // operator surface.
             if (showMenu) {
                 DashboardMenu(
-                    onDismiss = { showMenu = false },
+                    onDismiss = { viewModel.setDashboardMenuOpen(false) },
                     onDiagnosticsClick = {
-                        showMenu = false
+                        // Leave the menu OPEN in state — when the operator
+                        // returns from Diagnostics the dashboard re-renders
+                        // and the menu reopens automatically.
                         viewModel.navigateToDiagnostics()
-                    }
+                    },
+                    onLoadoutClick = {
+                        viewModel.setDashboardMenuOpen(false)
+                        showLoadout = true
+                    },
+                )
+            }
+
+            if (showLoadout) {
+                LoadoutDialog(
+                    selectedCartridgeId = selectedCartridge.id,
+                    selectedRifleId = selectedRifle.id,
+                    onCartridgeSelect = { viewModel.selectCartridge(it) },
+                    onRifleSelect = { viewModel.selectRifle(it) },
+                    onDismiss = { showLoadout = false },
                 )
             }
         }
 
         AppScreen.DIAGNOSTICS -> {
             DiagnosticsScreen(
-                onBackClick = { viewModel.navigateToHome() },
+                onBackClick = { viewModel.goBackFromDiagnostics() },
+                sensorData = sensorData,
+                sensorHistory = sensorHistory,
+                forceMockMode = forceMockMode,
+                onForceMockModeChange = { viewModel.setForceMockMode(it) },
                 isDarkTheme = darkTheme,
                 onToggleTheme = { viewModel.toggleTheme() },
             )
@@ -202,7 +242,8 @@ fun SniperApp(viewModel: SniperViewModel) {
 @Composable
 fun DashboardMenu(
     onDismiss: () -> Unit,
-    onDiagnosticsClick: () -> Unit
+    onDiagnosticsClick: () -> Unit,
+    onLoadoutClick: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -214,25 +255,8 @@ fun DashboardMenu(
         },
         text = {
             Column {
-                TextButton(
-                    onClick = onDiagnosticsClick,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.Start,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text(
-                            text = "⚙ ",
-                            fontSize = 20.sp
-                        )
-                        Text(
-                            text = "Diagnostics",
-                            fontSize = 16.sp
-                        )
-                    }
-                }
+                MenuEntry(icon = "⚙ ", label = "Diagnostics", onClick = onDiagnosticsClick)
+                MenuEntry(icon = "⌖ ", label = "Loadout", onClick = onLoadoutClick)
             }
         },
         confirmButton = {
@@ -241,4 +265,27 @@ fun DashboardMenu(
             }
         }
     )
+}
+
+@Composable
+private fun MenuEntry(icon: String, label: String, onClick: () -> Unit) {
+    TextButton(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.Start,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = icon,
+                fontSize = 20.sp
+            )
+            Text(
+                text = label,
+                fontSize = 16.sp
+            )
+        }
+    }
 }
