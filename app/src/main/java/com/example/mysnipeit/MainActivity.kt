@@ -106,6 +106,7 @@ fun SniperApp(viewModel: SniperViewModel) {
     val latchedSensorData by viewModel.latchedSensorData.collectAsStateWithLifecycle()
     val sensorHistory by viewModel.sensorHistory.collectAsStateWithLifecycle()
     val acousticEvent by viewModel.acousticEvent.collectAsStateWithLifecycle()
+    val activeAudioAlert by viewModel.activeAudioAlert.collectAsStateWithLifecycle()
     val detectedTargets by viewModel.detectedTargets.collectAsStateWithLifecycle()
     val firingSolution by viewModel.firingSolution.collectAsStateWithLifecycle()
     val systemStatus by viewModel.systemStatus.collectAsStateWithLifecycle()
@@ -180,6 +181,13 @@ fun SniperApp(viewModel: SniperViewModel) {
                 selectedTargetId = selectedTargetId,
                 streamReady = streamReady,
                 rtspStreamUrl = rtspStreamUrl,
+                audioAlert = activeAudioAlert,
+                audioAlertTimeoutMs = viewModel.audioAlertTimeoutMs,
+                // SLEW returns the world bearing; step 5 will use it to
+                // send an HTTP command to the Pi. For now we just clear
+                // the alert (acceptAudioAlert already does that).
+                onAudioAlertAccept = { viewModel.acceptAudioAlert() },
+                onAudioAlertDismiss = { viewModel.dismissAudioAlert() },
                 onTargetSelect = { targetId ->
                     if (targetId.isEmpty()) viewModel.deselectTarget()
                     else viewModel.selectTarget(targetId)

@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.example.mysnipeit.data.ballistics.FiringSolution
+import com.example.mysnipeit.data.models.AudioAlert
 import com.example.mysnipeit.data.models.ConnectionState
 import com.example.mysnipeit.data.models.DetectedTarget
 import com.example.mysnipeit.data.models.SensorData
@@ -52,6 +53,10 @@ fun DashboardScreen(
     selectedTargetId: String?,
     streamReady: Boolean,
     rtspStreamUrl: String?,
+    audioAlert: AudioAlert?,
+    audioAlertTimeoutMs: Long,
+    onAudioAlertAccept: () -> Unit,
+    onAudioAlertDismiss: () -> Unit,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onTargetSelect: (String) -> Unit = {},
@@ -135,6 +140,24 @@ fun DashboardScreen(
                         .align(Alignment.TopEnd)
                         .padding(16.dp)
                         .width(responsiveDp(tablet = 280.dp, compact = 220.dp)),
+                )
+            }
+
+            // Bottom-right (above the sensor strip): acoustic alert overlay.
+            // Renders as a full card (with SLEW / DISMISS) when no target is
+            // locked, or as a passive chip when one is — the AudioAlert
+            // composable picks the mode from the alert's isInteractive flag,
+            // which the ViewModel flips reactively on lock-state changes.
+            // bottom padding clears the 68 dp sensor strip + a small gap.
+            audioAlert?.let { a ->
+                AudioAlertOverlay(
+                    alert = a,
+                    timeoutMs = audioAlertTimeoutMs,
+                    onAccept = onAudioAlertAccept,
+                    onDismiss = onAudioAlertDismiss,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 84.dp),
                 )
             }
 
