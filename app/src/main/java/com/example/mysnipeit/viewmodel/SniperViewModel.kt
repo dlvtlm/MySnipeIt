@@ -3,14 +3,22 @@ package com.example.mysnipeit.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.mysnipeit.data.ballistics.FiringSolution
+import com.example.mysnipeit.data.ballistics.localizeTarget
+import com.example.mysnipeit.data.ballistics.solveFiringSolution
 import com.example.mysnipeit.data.location.DeviceLocationProvider
 import com.example.mysnipeit.data.models.*
 import com.example.mysnipeit.data.network.WifiBinder
 import com.example.mysnipeit.data.repository.SniperRepository
 import com.google.android.gms.maps.model.LatLng
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import android.util.Log
 
@@ -37,6 +45,30 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
         prefs.edit().putBoolean("dark_theme", next).apply()
     }
 
+    // --- Ballistic loadout (cartridge + rifle profile) ----------------------
+    // Persisted to SharedPreferences like dark_theme so the operator's pick
+    // survives restarts. Unknown/absent ids fall back to the catalog default
+    // via cartridgeById/rifleById. The ballistic solver reads these flows.
+    private val _selectedCartridge = MutableStateFlow(
+        BallisticProfiles.cartridgeById(prefs.getString("cartridge_id", null))
+    )
+    val selectedCartridge: StateFlow<CartridgeProfile> = _selectedCartridge.asStateFlow()
+
+    private val _selectedRifle = MutableStateFlow(
+        BallisticProfiles.rifleById(prefs.getString("rifle_id", null))
+    )
+    val selectedRifle: StateFlow<RifleProfile> = _selectedRifle.asStateFlow()
+
+    fun selectCartridge(id: String) {
+        _selectedCartridge.value = BallisticProfiles.cartridgeById(id)
+        prefs.edit().putString("cartridge_id", id).apply()
+    }
+
+    fun selectRifle(id: String) {
+        _selectedRifle.value = BallisticProfiles.rifleById(id)
+        prefs.edit().putString("rifle_id", id).apply()
+    }
+
     // --- Device GPS --------------------------------------------------------
     // Real device location, populated once the runtime location permission
     // has been granted (see MainActivity). Null until then OR while we wait
@@ -45,6 +77,7 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     //  - (future) Ballistics calculator as one of its inputs
     private val locationProvider = DeviceLocationProvider(application.applicationContext)
     val userLocation: StateFlow<LatLng?> = locationProvider.location
+    val userAltitudeM: StateFlow<Double?> = locationProvider.altitudeM
 
     /** Called by MainActivity after the user grants ACCESS_FINE_LOCATION. */
     fun onLocationPermissionGranted() {
@@ -55,6 +88,37 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     /** Called by MainActivity if the user denies the permission. */
     fun onLocationPermissionDenied() {
         Log.w("SniperViewModel", "Location permission denied — userLocation will stay null")
+    }
+
+    // --- Forced mock mode (Diagnostics → MOCK MODE) -------------------------
+    // Lets the operator test the ballistic calculator end-to-end without a
+    // Pi. The mock Pi's anchor is kept in sync with the operator's own GPS
+    // so the calculator stays in range regardless of where the device is.
+    private val _forceMockMode = MutableStateFlow(false)
+    val forceMockMode: StateFlow<Boolean> = _forceMockMode.asStateFlow()
+
+    init {
+        // Push the operator's latest GPS into the repository so the mock
+        // generator always picks up a fresh anchor on its next tick.
+        viewModelScope.launch {
+            combine(userLocation, userAltitudeM) { latLng, alt -> latLng to alt }
+                .collect { (latLng, alt) ->
+                    repository.setMockAnchor(latLng?.latitude, latLng?.longitude, alt)
+                }
+        }
+    }
+
+    fun setForceMockMode(enabled: Boolean) {
+        if (_forceMockMode.value == enabled) return
+        _forceMockMode.value = enabled
+        if (enabled) {
+            // Tear down any real Pi connection — mock writes would race
+            // with WS writes otherwise — and start the mock generator.
+            WifiBinder.release(getApplication<Application>().applicationContext)
+            repository.startForcedMock()
+        } else {
+            repository.stopForcedMock()
+        }
     }
 
     // All 4 devices
@@ -110,8 +174,195 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     // Data from repository
     val sensorData: StateFlow<SensorData?> = repository.sensorData
     val detectedTargets: StateFlow<List<DetectedTarget>> = repository.detectedTargets
-    val shootingSolution: StateFlow<ShootingSolution?> = repository.shootingSolution
+    // NOTE: We no longer consume the Pi's shooting_solution — the app
+    // computes its own from latchedSensorData + sniper GPS + loadout (see
+    // [firingSolution] below). The repository flow stays in place in case
+    // the Pi still sends it; it just isn't exposed to the UI anymore.
     val systemStatus: StateFlow<SystemStatus> = repository.systemStatus
+
+    // --- Sensor latching + history -----------------------------------------
+    // When the Pi reports a sub-frame with valid=false, the dashboard would
+    // previously snap to "—". Operators asked for stickier behaviour: keep
+    // showing the last GOOD reading for a short grace window, then fall back
+    // to "—" only if the sensor stays invalid long enough that the cached
+    // value is no longer trustworthy.
+    //
+    // CHANGE THIS to tune how long a stale reading is held before the UI
+    // shows "—". Frames typically arrive at 1.5 s in mock mode (one Pi
+    // dispatch per cycle in startMockDataGeneration); the real Pi rate is
+    // whatever its firmware emits. 5 s ≈ ~3 missed mock frames.
+    val sensorLatchTimeoutMs: Long = 5_000L
+
+    private data class Latched<T>(val value: T, val timestamp: Long)
+    private var distanceLatch: Latched<DistanceFrame>? = null
+    private var tempHumLatch: Latched<TempHumidityFrame>? = null
+    private var servoLatch: Latched<ServoFrame>? = null
+    private var gpsLatch: Latched<GpsFrame>? = null
+    private var compassLatch: Latched<CompassFrame>? = null
+    // Wind speed and direction latch INDEPENDENTLY because the Pi has two
+    // separate valid flags (one channel can glitch while the other reads).
+    private var windSpeedLatch: Latched<Float>? = null
+    private var windDirectionLatch: Latched<Float>? = null
+
+    private val _latchedSensorData = MutableStateFlow<SensorData?>(null)
+    /**
+     * SensorData where each sub-frame is the most recent VALID reading,
+     * held for up to [sensorLatchTimeoutMs]. Consumed by the dashboard so a
+     * momentary `valid=false` glitch doesn't blank a cell. Diagnostics
+     * reads the raw [sensorData] so the operator can still see actual flag
+     * state straight from the Pi.
+     */
+    val latchedSensorData: StateFlow<SensorData?> = _latchedSensorData.asStateFlow()
+
+    private val _sensorHistory = MutableStateFlow<List<SensorData>>(emptyList())
+    /**
+     * Rolling window of the last [SENSOR_HISTORY_SIZE] raw sensor frames
+     * (oldest first). Powers the Diagnostics → LIVE SENSORS panel. Updated
+     * only when a NEW frame arrives — not on the periodic timeout sweep.
+     */
+    val sensorHistory: StateFlow<List<SensorData>> = _sensorHistory.asStateFlow()
+
+    /**
+     * App-computed firing solution. Recomputes any time the latched sensor
+     * stream changes, the sniper's GPS updates, or the operator swaps the
+     * cartridge / rifle profile. Null when there aren't enough inputs to
+     * localise the target (e.g. compass hasn't fixed) or when the target is
+     * out of range for the loadout.
+     *
+     * The two-piece pipeline:
+     *   latched Pi sensors  ──►  localizeTarget  ──► target world coords
+     *   sniper GPS + loadout + atmosphere ──► solveFiringSolution
+     *
+     * Replaces the Pi-sourced ShootingSolution that used to drive the
+     * dashboard's firing-solution card.
+     */
+    val firingSolution: StateFlow<FiringSolution?> = combine(
+        latchedSensorData,
+        userLocation,
+        userAltitudeM,
+        selectedCartridge,
+        selectedRifle,
+    ) { sensor, sniperLatLng, sniperAlt, cart, rifle ->
+        computeFiringSolution(sensor, sniperLatLng, sniperAlt, cart, rifle)
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    private fun computeFiringSolution(
+        sensor: SensorData?,
+        sniperLatLng: LatLng?,
+        sniperAltM: Double?,
+        cart: CartridgeProfile,
+        rifle: RifleProfile,
+    ): FiringSolution? {
+        if (sniperLatLng == null) return null
+        // Pi POV → target world coordinates. Returns null if compass / GPS /
+        // rangefinder aren't all available — that's the right behaviour;
+        // a missing input must not become a 0° silent substitution.
+        val target = localizeTarget(
+            piGps = sensor?.ddlFrame?.gps,
+            compassHeadingDeg = sensor.compassHeadingDeg(),
+            servoHorizontalDeg = sensor.servoHorizontalDeg(),
+            servoVerticalDeg = sensor.servoVerticalDeg(),
+            rangefinderDistanceM = sensor.distanceM(),
+        ) ?: return null
+        // Sniper POV → firing solution. Fall back to the target's altitude
+        // when the tablet's GPS has no vertical fix (treats the shot as
+        // level, which is the least-bad assumption short of guessing).
+        val tempHum = sensor?.ddlFrame?.temperatureHumidity?.takeIf { it.valid }
+        return solveFiringSolution(
+            sniperLatDeg = sniperLatLng.latitude,
+            sniperLonDeg = sniperLatLng.longitude,
+            sniperAltM = sniperAltM ?: target.altitudeM,
+            target = target,
+            cartridge = cart,
+            rifle = rifle,
+            windSpeedMps = sensor.windSpeedMps(),
+            windDirectionDeg = sensor.windDirectionDeg(),
+            temperatureC = tempHum?.temperatureC,
+            humidityPct = tempHum?.humidityPct,
+        )
+    }
+
+    init {
+        // Build the latched stream on every new raw frame so the UI gets
+        // an immediate update without waiting for the next 500ms tick.
+        viewModelScope.launch {
+            repository.sensorData.collect { frame ->
+                if (frame != null) {
+                    val history = _sensorHistory.value + frame
+                    _sensorHistory.value = if (history.size > SENSOR_HISTORY_SIZE)
+                        history.takeLast(SENSOR_HISTORY_SIZE) else history
+                }
+                applyLatchAndEmit()
+            }
+        }
+        // Periodic sweep enforces the timeout even when the Pi has gone
+        // silent OR keeps re-sending the same valid=false frame.
+        viewModelScope.launch {
+            while (isActive) {
+                delay(500)
+                applyLatchAndEmit()
+            }
+        }
+    }
+
+    private fun applyLatchAndEmit() {
+        val raw = repository.sensorData.value
+        val ddl = raw?.ddlFrame
+        val now = System.currentTimeMillis()
+
+        // Refresh each latch from the current frame ----------------------
+        ddl?.distance?.let { if (it.valid) distanceLatch = Latched(it, now) }
+        ddl?.temperatureHumidity?.let { if (it.valid) tempHumLatch = Latched(it, now) }
+        // Servo has no valid flag — when the sub-frame is present, latch it.
+        ddl?.servo?.let { servoLatch = Latched(it, now) }
+        ddl?.gps?.let { if (it.valid) gpsLatch = Latched(it, now) }
+        // Compass only latches when both `valid` AND headingDeg are non-null
+        // (matches the rule in compassHeadingDeg() — a missing heading must
+        // never be silently substituted as 0° / true north).
+        ddl?.compass?.let { if (it.valid && it.headingDeg != null) compassLatch = Latched(it, now) }
+        ddl?.wind?.let {
+            if (it.speedValid) windSpeedLatch = Latched(it.speedMps, now)
+            if (it.directionValid) windDirectionLatch = Latched(it.directionDeg, now)
+        }
+
+        // Expire stale latches ------------------------------------------
+        if (distanceLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) distanceLatch = null
+        if (tempHumLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) tempHumLatch = null
+        if (servoLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) servoLatch = null
+        if (gpsLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) gpsLatch = null
+        if (compassLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) compassLatch = null
+        if (windSpeedLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) windSpeedLatch = null
+        if (windDirectionLatch?.let { now - it.timestamp > sensorLatchTimeoutMs } == true) windDirectionLatch = null
+
+        // Compose the latched SensorData. Sub-frames carry valid=true when
+        // a latched value exists, so the helper extensions in SensorData.kt
+        // don't need to change.
+        val latchedWind = if (windSpeedLatch != null || windDirectionLatch != null) {
+            WindFrame(
+                speedValid = windSpeedLatch != null,
+                speedMps = windSpeedLatch?.value ?: 0f,
+                directionValid = windDirectionLatch != null,
+                directionDeg = windDirectionLatch?.value ?: 0f,
+            )
+        } else null
+
+        _latchedSensorData.value = SensorData(
+            type = raw?.type ?: "sensor_data",
+            timestamp = raw?.timestamp ?: now,
+            ddlFrame = DdlFrame(
+                distance = distanceLatch?.value,
+                temperatureHumidity = tempHumLatch?.value,
+                servo = servoLatch?.value,
+                gps = gpsLatch?.value,
+                compass = compassLatch?.value,
+                wind = latchedWind,
+            ),
+        )
+    }
+
+    private companion object {
+        const val SENSOR_HISTORY_SIZE = 10
+    }
 
     fun navigateToDeviceList() {
         _uiState.value = _uiState.value.copy(currentScreen = AppScreen.DEVICE_SELECTION)
@@ -126,7 +377,28 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     fun navigateToDiagnostics() {
-        _uiState.value = _uiState.value.copy(currentScreen = AppScreen.DIAGNOSTICS)
+        // Remember where we came from so the back button restores it. The
+        // dashboard menu state (if open) is in uiState already, so it'll
+        // naturally re-render when we navigate back to the dashboard.
+        _uiState.value = _uiState.value.copy(
+            currentScreen = AppScreen.DIAGNOSTICS,
+            diagnosticsFromScreen = _uiState.value.currentScreen,
+        )
+    }
+
+    fun goBackFromDiagnostics() {
+        val target = _uiState.value.diagnosticsFromScreen
+        _uiState.value = _uiState.value.copy(
+            currentScreen = target,
+            diagnosticsFromScreen = AppScreen.HOME,
+        )
+    }
+
+    /** Open / close the dashboard's MENU dialog. Lives in uiState so its
+     *  state survives a round-trip into the Diagnostics screen — the menu
+     *  reopens automatically when the operator returns to the dashboard. */
+    fun setDashboardMenuOpen(open: Boolean) {
+        _uiState.value = _uiState.value.copy(dashboardMenuOpen = open)
     }
 
     fun selectDevice(device: Device) {
@@ -245,7 +517,15 @@ data class SniperUiState(
     val connectionError: String? = null,
     val isVideoFullscreen: Boolean = false,
     val selectedTargetId: String? = null,
-    val previousScreen: AppScreen? = null
+    val previousScreen: AppScreen? = null,
+    // Where to return when the operator hits BACK on the Diagnostics
+    // screen. Captured by navigateToDiagnostics(), consumed by
+    // goBackFromDiagnostics(). Defaults to HOME so the first-launch path
+    // (Home → Diagnostics → back) still feels right.
+    val diagnosticsFromScreen: AppScreen = AppScreen.HOME,
+    // Dashboard MENU dialog visibility. Lifted out of the composable so it
+    // persists across a Diagnostics round-trip.
+    val dashboardMenuOpen: Boolean = false,
 )
 
 enum class AppScreen {

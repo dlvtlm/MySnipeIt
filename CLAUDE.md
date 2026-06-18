@@ -4,7 +4,7 @@
 
 ## What this is
 
-Android tactical operator app that talks to a **Raspberry Pi 5** mounted on a remote sniper/sensor rig. The phone/tablet is the operator HUD: it shows the Pi's live RTSP video, overlays ML target detections, displays sensor telemetry (rangefinder, temp/humidity, GPS, servo angles), and sends commands (lock/unlock target, calibrate, manual target, e-stop) back to the Pi over WebSocket + HTTP.
+Android tactical operator app that talks to a **Raspberry Pi 5** mounted on a remote sniper/sensor rig. The phone/tablet is the operator HUD: it shows the Pi's live RTSP video, overlays ML target detections, displays sensor telemetry (rangefinder, temp/humidity, GPS, wind, servo angles, compass), and sends commands (lock/unlock target, calibrate, manual target, e-stop) back to the Pi over WebSocket + HTTP.
 
 - **Platform:** Android, `minSdk 26`, `targetSdk/compileSdk 34`, landscape-only, immersive (system bars hidden).
 - **UI:** 100% Jetpack Compose, Material3, custom "tactical" palette (dark + light).
@@ -23,7 +23,7 @@ Android tactical operator app that talks to a **Raspberry Pi 5** mounted on a re
 - **Maps:** `play-services-maps` + `maps-compose` 4.3.0, plus `play-services-location` (FusedLocationProvider). Google Maps API key injected via Secrets Gradle plugin as `${MAPS_API_KEY}` in the manifest — put it in `local.properties` as `MAPS_API_KEY=...`.
 - **Permissions runtime:** Accompanist Permissions 0.32.0. Location permission is requested manually in `MainActivity` (not via Accompanist there).
 - **JSON:** Gson 2.10.1 (kotlinx-serialization is in the catalog but not applied).
-- **Persistence:** `SharedPreferences` only ("snipeit" prefs, currently just `dark_theme` boolean). No Room, no DataStore.
+- **Persistence:** `SharedPreferences` only ("snipeit" prefs: `dark_theme` boolean, `cartridge_id` + `rifle_id` strings for the ballistic loadout). No Room, no DataStore.
 
 ## Repo layout
 
@@ -38,8 +38,11 @@ MySnipeIt/
 │           ├── MainActivity.kt                       # Single Activity, hosts Compose root, perms, immersive mode
 │           ├── viewmodel/SniperViewModel.kt          # All app state, nav, device list, theme toggle
 │           ├── data/
+│           │   ├── ballistics/
+│           │   │   ├── TargetLocalizer.kt             # Pure fn: Pi sensors → target world coords; RigGeometry constants
+│           │   │   └── FiringSolutionSolver.kt        # Pure fn: sniper GPS + target + cartridge/rifle/atmosphere → AZ / hold-over / windage / TOF
 │           │   ├── location/DeviceLocationProvider.kt # FusedLocationProvider wrapper → StateFlow<LatLng?>
-│           │   ├── models/                            # All data classes (Device, SensorData, Target, ShootingSolution, SystemStatus)
+│           │   ├── models/                            # All data classes (Device, SensorData, Target, ShootingSolution, SystemStatus, BallisticProfiles)
 │           │   ├── network/
 │           │   │   ├── RaspberryPiClient.kt          # WS + HTTP client to RPi; pacer + IoU tracker + EMA smoother + keepalive
 │           │   │   ├── WifiBinder.kt                 # Force traffic onto WiFi (RPi AP has no internet)
@@ -52,6 +55,7 @@ MySnipeIt/
 │               ├── dashboard/
 │               │   ├── DashboardScreen.kt            # Operator HUD chrome around the video
 │               │   ├── TacticalVideoPlayer.kt        # ExoPlayer RTSP + bbox overlays + reticles
+│               │   ├── LoadoutDialog.kt              # Cartridge + rifle profile picker (MENU → Loadout)
 │               │   └── MockVideoFeed.kt              # Plays bundled field_video.mp4 when no RTSP
 │               ├── diagnostics/DiagnosticsScreen.kt  # Live sensor / status dump
 │               ├── components/TacticalCompass.kt     # Custom azimuth compass widget
@@ -84,13 +88,19 @@ RPi5 ──WS:8555──► RaspberryPiClient ──StateFlow──► SniperRep
 Exposed from `SniperViewModel`:
 - `uiState: StateFlow<SniperUiState>` — `currentScreen`, `selectedDeviceId`, `selectedTargetId`, `previousScreen`, etc.
 - `availableDevices` — **hardcoded list of 4 devices** (Device 1–4) with fake GPS coords in the Negev region. Device 3 uses `WifiBinder.FALLBACK_GATEWAY` (`10.42.1.1`) as its IP — this is the real RPi.
-- `sensorData: StateFlow<SensorData?>`
+- `userAltitudeM: StateFlow<Double?>` — device altitude in metres MSL when the GPS fix has a vertical component; null otherwise. Fed into the firing-solution solver as the sniper's elevation.
+- `firingSolution: StateFlow<FiringSolution?>` — app-computed solution from `latchedSensorData` + `userLocation`/`userAltitudeM` + selected cartridge/rifle. Recomputes reactively via `combine()`. The Pi's `shooting_solution` WS message is still parsed by `RaspberryPiClient` but is NOT consumed by the UI — `firingSolution` replaces it.
+- `sensorData: StateFlow<SensorData?>` — RAW stream straight from the Pi; consumed by the Diagnostics LIVE SENSORS pane so the operator sees actual valid flags.
+- `latchedSensorData: StateFlow<SensorData?>` — sticky version of `sensorData`: each sub-frame holds its last VALID reading for up to `sensorLatchTimeoutMs` (default 5 s; tunable on `SniperViewModel`) before falling back to "—". Dashboard consumes this. Wind speed + direction latch independently (two valid flags), and the compass only latches when `heading_deg` is non-null so a missing heading is never substituted as `0°`.
+- `sensorHistory: StateFlow<List<SensorData>>` — rolling window of the last 10 raw frames (oldest first). Powers the Diagnostics LIVE SENSORS history strip.
 - `detectedTargets: StateFlow<List<DetectedTarget>>` — post-pacer/tracker output, NOT raw WS payload
 - `shootingSolution: StateFlow<ShootingSolution?>`
 - `systemStatus: StateFlow<SystemStatus>`
 - `streamReady: StateFlow<Boolean>` + `rtspStreamUrl: StateFlow<String?>`
 - `userLocation: StateFlow<LatLng?>` — device GPS, null until permission granted + first fix
 - `darkTheme: StateFlow<Boolean>` — persisted to SharedPreferences
+- `selectedCartridge: StateFlow<CartridgeProfile>` + `selectedRifle: StateFlow<RifleProfile>` — ballistic loadout, persisted to SharedPreferences, chosen via dashboard MENU → Loadout (`LoadoutDialog`). Presets live in `BallisticProfiles`.
+- `forceMockMode: StateFlow<Boolean>` — operator-triggered offline test path; setter `setForceMockMode(true)` disconnects from any real Pi and starts the in-app mock generator. Wired to Diagnostics → MOCK MODE. The mock anchors the synthetic Pi ~100 m east of the operator's own GPS so the ballistic calculator stays in range regardless of where the device is.
 
 ### Navigation
 
@@ -106,7 +116,7 @@ No Nav Compose graph — `SniperApp` does a manual `when (uiState.currentScreen)
 - **RTSP video:** `rtsp://<ip>:8554/<stream_name>` (stream name comes from `stream_ready` event)
 
 ### Incoming WS message types (handled in `handleWebSocketMessage`)
-- `sensor_data` — nested `ddl_frame` with `distance` / `temperature_humidity` / `servo` / `gps` sub-frames. Each sub-frame has a `valid` flag (except `servo`); dashboard hides values when `valid=false`. See `SensorData.kt` for the helper extensions (`distanceM()`, `gpsLatLon()`, etc.) — always use them, don't access nested fields directly.
+- `sensor_data` — nested `ddl_frame` with `distance` / `temperature_humidity` / `servo` / `gps` / `compass` / `wind` sub-frames. Each sub-frame has a `valid` flag (except `servo`, which has none, and `wind`, which has two: `speed_valid` and `direction_valid` independently). Dashboard hides values when `valid=false`. Wind speed + direction are shown on the bottom sensor strip; compass + servo are parsed but NOT displayed (kept for the future ballistics calculator). See `SensorData.kt` for the helper extensions (`distanceM()`, `gpsLatLon()`, `windSpeedMps()`, `windDirectionDeg()`, `compassHeadingDeg()`, etc.) — always use them, don't access nested fields directly.
 - `target_detection` — array of `{id, class, confidence, bbox{x,y,width,height}}` in pixel coords against a **1920×1080** video frame. Hardcoded resolution in `TacticalVideoPlayer.kt` (`VIDEO_WIDTH/VIDEO_HEIGHT`).
 - `shooting_solution` — `{targetId, azimuth, elevation, windageAdjustment, elevationAdjustment, confidence, timestamp}`.
 - `stream_ready` — `{rtsp_port, stream_name}` → builds `rtspStreamUrl` and flips `streamReady`.
@@ -168,9 +178,11 @@ Runtime permission flow: `MainActivity.ensureLocationPermission()` checks `ACCES
 - **`SystemStatus` from WS doesn't match `SystemStatus` data class precisely** — Gson parses field-by-field, missing fields become defaults. If you add fields, double-check both sides.
 - **Hardcoded video resolution** — 1920×1080 in `TacticalVideoPlayer.kt`. If the Pi ever changes resolution, this breaks bbox scaling.
 - **`previousScreen` nav is a hack** — manual back-stack tracking instead of Nav Compose. Tolerable for 5 screens, would need replacing if nav gets richer.
-- **No tests beyond the AS templates** — `ExampleInstrumentedTest` and `ExampleUnitTest` are unmodified.
+- **Almost no tests** — `ExampleInstrumentedTest`/`ExampleUnitTest` are unmodified AS templates. The one real suite is `TargetLocalizerTest` (pure-math geodesy for the ballistics localizer).
+- **`RigGeometry` constants are UNVERIFIED** — `TargetLocalizer.kt` assumes compass on the fixed base, servo pan/tilt centered at 90°, declination 0. One field test against the real rig must confirm/flip these; tests in `TargetLocalizerTest` encode the same assumptions.
 - **Hardcoded device list** — `availableDevices` in `SniperViewModel` is a fixed 4 entries. Real device discovery isn't implemented.
 - **Strings are mostly inlined** — `res/values/strings.xml` only has `app_name`. Most UI strings (chip labels, button text, etc.) are hardcoded literals in Composables. Not translation-ready.
+- **`compass.heading_deg` can be JSON `null`** — the Pi's C `build_json` emits the literal token `null` (not a number) when the magnetometer hasn't fixed yet. `CompassFrame.headingDeg` is therefore `Float?`. Always read it via `compassHeadingDeg()` which gates on both `valid` and non-null; never treat a missing heading as `0°` (true north).
 
 ## Maintenance — keep this doc current
 

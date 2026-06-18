@@ -15,7 +15,9 @@ import com.google.gson.annotations.SerializedName
  *     "distance":             { "valid": ..., "distance_m": ..., "status": ..., "precision": ..., "strength": ... },
  *     "temperature_humidity": { "valid": ..., "temperature_c": ..., "humidity_pct": ... },
  *     "servo":                { "horizontal_deg": ..., "vertical_deg": ... },
- *     "gps":                  { "valid": ..., "fix_type": ..., "num_satellites": ..., "latitude_deg": ..., "longitude_deg": ..., "altitude_m": ..., "h_acc_m": ... }
+ *     "gps":                  { "valid": ..., "fix_type": ..., "num_satellites": ..., "latitude_deg": ..., "longitude_deg": ..., "altitude_m": ..., "h_acc_m": ... },
+ *     "compass":              { "valid": ..., "raw_x": ..., "raw_y": ..., "raw_z": ..., "temperature_c": ..., "heading_deg": ... },
+ *     "wind":                 { "speed_valid": ..., "speed_mps": ..., "direction_valid": ..., "direction_deg": ... }
  *   }
  * }
  * ```
@@ -23,12 +25,19 @@ import com.google.gson.annotations.SerializedName
  * Display rule: a sub-frame's data is shown on the dashboard only if the
  * sub-frame is present AND its `valid` flag is true. [ServoFrame] has no
  * `valid` field (matches the C struct on the Pi); it's treated as valid
- * whenever its sub-frame is present.
+ * whenever its sub-frame is present. [WindFrame] has TWO valid flags —
+ * speed and direction can be valid independently.
  *
- * Fields the Pi may send but that we don't yet display (e.g. distance
- * precision/strength, GPS altitude/h_acc) are still parsed into these
- * classes so they're available when the app starts computing its own
- * shooting solution.
+ * Quirk: [CompassFrame.headingDeg] is **nullable**. The Pi emits the JSON
+ * literal `null` (not a number) when the magnetometer hasn't fixed yet —
+ * see the C `build_json` function. Read it via [compassHeadingDeg] which
+ * also gates on `valid`, so the future ballistics calc never accidentally
+ * treats "no heading" as "heading = 0° (true north)".
+ *
+ * Fields the Pi sends but that we don't yet display (e.g. distance
+ * precision/strength, GPS altitude/h_acc, compass raw_x/y/z, compass
+ * temperature) are still parsed into these classes so they're available
+ * when the app starts computing its own shooting solution.
  */
 data class SensorData(
     val type: String? = null,
@@ -37,16 +46,19 @@ data class SensorData(
 )
 
 /**
- * Container for the four current sensor sub-frames. Each sub-frame is
+ * Container for the six current sensor sub-frames. Each sub-frame is
  * nullable so the Pi can omit a subsystem that's offline / not yet
  * initialized without breaking the parse. Leaf fields inside each
- * sub-frame are non-null per the C-struct contract on the Pi.
+ * sub-frame are non-null per the C-struct contract on the Pi — with the
+ * one exception of [CompassFrame.headingDeg], which can be JSON `null`.
  */
 data class DdlFrame(
     val distance: DistanceFrame? = null,
     @SerializedName("temperature_humidity") val temperatureHumidity: TempHumidityFrame? = null,
     val servo: ServoFrame? = null,
     val gps: GpsFrame? = null,
+    val compass: CompassFrame? = null,
+    val wind: WindFrame? = null,
 )
 
 /** Laser rangefinder. `valid` gates whether `distanceM` is displayed. */
@@ -85,6 +97,53 @@ data class GpsFrame(
     @SerializedName("h_acc_m") val hAccM: Double = 0.0,
 )
 
+/**
+ * Magnetometer / compass.
+ *
+ * `headingDeg` is intentionally **nullable** because the Pi C code emits
+ * JSON `null` (not a number) when the magnetometer hasn't fixed yet:
+ *
+ * ```c
+ * if (c->valid && isfinite(c->heading_deg))
+ *     snprintf(heading_buf, ..., "%.2f", ...);
+ * else
+ *     snprintf(heading_buf, ..., "null");          // ← literal null
+ * // ...emitted via "heading_deg":%s
+ * ```
+ *
+ * Always read it via [compassHeadingDeg], which checks both `valid` AND
+ * non-null heading so a zero magnetometer reading is never confused with
+ * "no fix".
+ *
+ * `rawX/Y/Z` and `temperatureC` are diagnostic fields kept here for the
+ * future ballistics calculator (e.g. dynamic declination compensation)
+ * but never shown on the dashboard.
+ */
+data class CompassFrame(
+    val valid: Boolean = false,
+    @SerializedName("raw_x") val rawX: Int = 0,
+    @SerializedName("raw_y") val rawY: Int = 0,
+    @SerializedName("raw_z") val rawZ: Int = 0,
+    @SerializedName("temperature_c") val temperatureC: Float = 0f,
+    @SerializedName("heading_deg") val headingDeg: Float? = null,
+)
+
+/**
+ * Wind speed + direction.
+ *
+ * Has TWO independent valid flags — the Pi can report speed without
+ * direction (or vice-versa) when one of the sensor channels glitches.
+ * Helpers [windSpeedMps] / [windDirectionDeg] each check only their own
+ * flag, so the dashboard can show one cell as "—" while the other has
+ * a real reading.
+ */
+data class WindFrame(
+    @SerializedName("speed_valid") val speedValid: Boolean = false,
+    @SerializedName("speed_mps") val speedMps: Float = 0f,
+    @SerializedName("direction_valid") val directionValid: Boolean = false,
+    @SerializedName("direction_deg") val directionDeg: Float = 0f,
+)
+
 // ---------------------------------------------------------------------------
 // Extension helpers — keep dashboard code clean. Each returns the field's
 // value only if its sub-frame is present AND valid (or just present for
@@ -114,3 +173,20 @@ fun SensorData?.servoHorizontalDeg(): Float? =
 
 fun SensorData?.servoVerticalDeg(): Float? =
     this?.ddlFrame?.servo?.verticalDeg
+
+/**
+ * Compass heading in degrees from magnetic north (0-360°).
+ * Returns null when the sub-frame is missing, `valid=false`, OR
+ * `heading_deg` is JSON `null`. The ballistics calculator must check
+ * for null before using this — a missing heading isn't "0°".
+ */
+fun SensorData?.compassHeadingDeg(): Float? =
+    this?.ddlFrame?.compass?.takeIf { it.valid }?.headingDeg
+
+/** Wind speed in m/s. Gated by `speed_valid`. */
+fun SensorData?.windSpeedMps(): Float? =
+    this?.ddlFrame?.wind?.takeIf { it.speedValid }?.speedMps
+
+/** Wind direction in degrees from north (0-360°). Gated by `direction_valid`. */
+fun SensorData?.windDirectionDeg(): Float? =
+    this?.ddlFrame?.wind?.takeIf { it.directionValid }?.directionDeg
