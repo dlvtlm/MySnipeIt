@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.mysnipeit.data.ballistics.FiringSolution
 import com.example.mysnipeit.data.ballistics.localizeTarget
 import com.example.mysnipeit.data.ballistics.solveFiringSolution
+import com.example.mysnipeit.data.ballistics.worldBearingFromAcousticEvent
 import com.example.mysnipeit.data.location.DeviceLocationProvider
 import com.example.mysnipeit.data.models.*
 import com.example.mysnipeit.data.network.WifiBinder
@@ -363,6 +364,164 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
                 wind = latchedWind,
             ),
         )
+    }
+
+    // --- Acoustic alert state machine ---------------------------------------
+    // Transforms the raw `acousticEvent` stream into a derived
+    // `activeAudioAlert` that:
+    //   - converts the mic-frame azimuth into a world bearing (compass +
+    //     RigGeometry.MIC_ARRAY_OFFSET_DEG via worldBearingFromAcousticEvent);
+    //   - dedupes same-source events within audioAlertDedupeWindowDeg (refreshes
+    //     the existing alert in place instead of replacing it with a new card);
+    //   - auto-dismisses an alert after audioAlertTimeoutMs from FIRST detection
+    //     (timeout is NOT refreshed on dedupe — a continuously-firing source
+    //     still clears itself eventually so the HUD doesn't accumulate stale
+    //     alerts);
+    //   - suppresses re-firing within audioAlertDedupeWindowDeg of a recently
+    //     dismissed bearing for dismissDebounceMs, so an explicit DISMISS isn't
+    //     instantly overruled by the next event from the same source;
+    //   - flips isInteractive based on whether a target is currently selected
+    //     (locked engagement → passive chip; deselected → full card with
+    //     buttons), and flips back automatically when the operator deselects.
+
+    /** Auto-dismiss timeout. Tunable — same pattern as sensorLatchTimeoutMs.
+     *  Counted from the FIRST event of a dedupe group, not the latest. */
+    val audioAlertTimeoutMs: Long = 20_000L
+
+    /** Two events within this angular distance (shortest path on the circle)
+     *  are treated as the same source — refresh the existing alert instead of
+     *  replacing it, and a recent DISMISS suppresses re-fires within this same
+     *  window. ±15° is roughly twice the typical TDOA error of a 4-mic array
+     *  at sub-100 m ranges. */
+    private val audioAlertDedupeWindowDeg: Double = 15.0
+
+    /** How long an explicit DISMISS suppresses re-firing for the same source. */
+    private val dismissDebounceMs: Long = 30_000L
+
+    private val _activeAudioAlert = MutableStateFlow<AudioAlert?>(null)
+    /**
+     * Derived alert with dedupe + auto-dismiss + lock-aware render mode.
+     * The dashboard reads this for the corner card / passive chip. Null
+     * when no current alert (no event yet, dismissed, or timed out).
+     */
+    val activeAudioAlert: StateFlow<AudioAlert?> = _activeAudioAlert.asStateFlow()
+
+    private var lastDismissedBearing: Double? = null
+    private var lastDismissedAtMs: Long = 0L
+
+    init {
+        // React to new raw events from the Pi.
+        viewModelScope.launch {
+            repository.acousticEvent.collect { applyAcousticEvent(it) }
+        }
+        // React to lock-state changes — flip isInteractive without
+        // mutating any other field of the alert.
+        viewModelScope.launch {
+            uiState.collect { state -> updateAlertInteractivity(state.selectedTargetId) }
+        }
+        // Periodic timeout sweep.
+        viewModelScope.launch {
+            while (isActive) {
+                delay(500)
+                sweepAlertTimeout()
+            }
+        }
+    }
+
+    private fun applyAcousticEvent(event: AcousticEvent?) {
+        // worldBearingFromAcousticEvent does the valid-flag + null-compass
+        // checks for us; the result is non-null only when we can place the
+        // sound source in the world.
+        val compass = latchedSensorData.value.compassHeadingDeg()
+        val bearing = worldBearingFromAcousticEvent(event, compass) ?: return
+        val now = System.currentTimeMillis()
+
+        // Suppress if the operator just dismissed a same-source event.
+        val dismissed = lastDismissedBearing
+        if (dismissed != null &&
+            now - lastDismissedAtMs < dismissDebounceMs &&
+            angularDistance(dismissed, bearing) <= audioAlertDedupeWindowDeg
+        ) {
+            return
+        }
+
+        val interactive = _uiState.value.selectedTargetId.isNullOrEmpty()
+        val current = _activeAudioAlert.value
+        val isSameSource = current != null &&
+            angularDistance(current.bearingDeg, bearing) <= audioAlertDedupeWindowDeg
+
+        _activeAudioAlert.value = if (isSameSource && current != null) {
+            // Dedupe-then-replace: refresh confidence/amplitude/duration and
+            // bump lastUpdated, but keep firstSeenAtMs so the timeout still
+            // counts from the ORIGINAL detection.
+            current.copy(
+                rawAzimuthDeg = event!!.azimuthDeg.toDouble(),
+                confidence = event.confidence,
+                peakAmplitude = event.peakAmplitude,
+                durationMs = event.durationMs,
+                lastUpdatedAtMs = now,
+                isInteractive = interactive,
+            )
+        } else {
+            AudioAlert(
+                bearingDeg = bearing,
+                rawAzimuthDeg = event!!.azimuthDeg.toDouble(),
+                confidence = event.confidence,
+                peakAmplitude = event.peakAmplitude,
+                durationMs = event.durationMs,
+                firstSeenAtMs = now,
+                lastUpdatedAtMs = now,
+                isInteractive = interactive,
+            )
+        }
+    }
+
+    private fun updateAlertInteractivity(selectedTargetId: String?) {
+        val current = _activeAudioAlert.value ?: return
+        val newInteractive = selectedTargetId.isNullOrEmpty()
+        if (current.isInteractive != newInteractive) {
+            _activeAudioAlert.value = current.copy(isInteractive = newInteractive)
+        }
+    }
+
+    private fun sweepAlertTimeout() {
+        val current = _activeAudioAlert.value ?: return
+        if (System.currentTimeMillis() - current.firstSeenAtMs > audioAlertTimeoutMs) {
+            _activeAudioAlert.value = null
+        }
+    }
+
+    /**
+     * Operator accepted the alert (tapped SLEW). Clears the alert and
+     * returns the world bearing for the caller to forward to the Pi's
+     * slew command (wired in step 5). Returns null when there's no
+     * active alert to accept.
+     *
+     * No dismiss-debounce on accept — if events keep arriving from the
+     * accepted direction while the Pi auto-scans there, that's expected
+     * (the operator chose to engage that direction) and the next event
+     * will alert normally.
+     */
+    fun acceptAudioAlert(): Double? {
+        val current = _activeAudioAlert.value ?: return null
+        _activeAudioAlert.value = null
+        return current.bearingDeg
+    }
+
+    /** Operator dismissed the alert. Clears it and remembers the bearing
+     *  so same-source events within dismissDebounceMs don't immediately
+     *  re-alert. */
+    fun dismissAudioAlert() {
+        val current = _activeAudioAlert.value ?: return
+        lastDismissedBearing = current.bearingDeg
+        lastDismissedAtMs = System.currentTimeMillis()
+        _activeAudioAlert.value = null
+    }
+
+    /** Shortest-path angular distance between two bearings, in degrees. */
+    private fun angularDistance(a: Double, b: Double): Double {
+        val d = Math.abs(a - b) % 360.0
+        return if (d > 180.0) 360.0 - d else d
     }
 
     private companion object {
