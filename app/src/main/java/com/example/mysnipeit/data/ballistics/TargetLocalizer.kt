@@ -54,6 +54,18 @@ object RigGeometry {
      * deployment would compute it from GPS + date via a WMM table.
      */
     const val MAGNETIC_DECLINATION_DEG = 0.0
+
+    /**
+     * Angular offset (deg, clockwise positive) between the compass's
+     * north-reference axis and the mic array's azimuth-zero axis. Both are
+     * bolted to the fixed tripod so this is a hardware constant — measure
+     * it once after assembly, hard-code, done.
+     *
+     * UNVERIFIED — physical rig hasn't been built. Stays at 0 until the
+     * mic array is mounted; flip to the measured value and acoustic-event
+     * world bearings will be correct without any other code change.
+     */
+    const val MIC_ARRAY_OFFSET_DEG = 0.0
 }
 
 /** Mean Earth radius (m) — fine for the equirectangular projection below. */

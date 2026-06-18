@@ -80,6 +80,12 @@ class RaspberryPiClient {
     private val _shootingSolution = MutableStateFlow<ShootingSolution?>(null)
     val shootingSolution: StateFlow<ShootingSolution?> = _shootingSolution.asStateFlow()
 
+    // Latest acoustic event from the Pi's 4-mic TDOA module. Single-slot
+    // flow — the alert state machine (added in a later step) handles
+    // de-dupe and timeout; the parser just publishes the raw event.
+    private val _acousticEvent = MutableStateFlow<AcousticEvent?>(null)
+    val acousticEvent: StateFlow<AcousticEvent?> = _acousticEvent.asStateFlow()
+
     // System status - FIXED to match your model exactly
     private val _systemStatus = MutableStateFlow(
         SystemStatus(
@@ -350,6 +356,15 @@ class RaspberryPiClient {
                 "system_status" -> {
                     val status = gson.fromJson(message, SystemStatus::class.java)
                     _systemStatus.value = status
+                }
+                "acoustic_event" -> {
+                    // Single TDOA detection from the Pi's mic array. The
+                    // dedupe + timeout logic lives in SniperViewModel; here
+                    // we just publish the raw event.
+                    val event = gson.fromJson(message, AcousticEvent::class.java)
+                    _acousticEvent.value = event
+                    Log.d(TAG, "Acoustic event azim=${event.azimuthDeg} " +
+                        "conf=${event.confidence} valid=${event.valid}")
                 }
             }
         } catch (e: Exception) {

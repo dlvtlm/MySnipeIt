@@ -21,6 +21,7 @@ class SniperRepository {
     val detectedTargets: StateFlow<List<DetectedTarget>> = raspberryPiClient.detectedTargets
     val shootingSolution: StateFlow<ShootingSolution?> = raspberryPiClient.shootingSolution
     val systemStatus: StateFlow<SystemStatus> = raspberryPiClient.systemStatus
+    val acousticEvent: StateFlow<AcousticEvent?> = raspberryPiClient.acousticEvent
 
     val streamReady: StateFlow<Boolean> = raspberryPiClient.streamReady
     val rtspStreamUrl: StateFlow<String?> = raspberryPiClient.rtspStreamUrl

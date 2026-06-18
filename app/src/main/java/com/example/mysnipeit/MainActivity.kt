@@ -105,6 +105,7 @@ fun SniperApp(viewModel: SniperViewModel) {
     val sensorData by viewModel.sensorData.collectAsStateWithLifecycle()
     val latchedSensorData by viewModel.latchedSensorData.collectAsStateWithLifecycle()
     val sensorHistory by viewModel.sensorHistory.collectAsStateWithLifecycle()
+    val acousticEvent by viewModel.acousticEvent.collectAsStateWithLifecycle()
     val detectedTargets by viewModel.detectedTargets.collectAsStateWithLifecycle()
     val firingSolution by viewModel.firingSolution.collectAsStateWithLifecycle()
     val systemStatus by viewModel.systemStatus.collectAsStateWithLifecycle()
@@ -230,6 +231,7 @@ fun SniperApp(viewModel: SniperViewModel) {
                 onBackClick = { viewModel.goBackFromDiagnostics() },
                 sensorData = sensorData,
                 sensorHistory = sensorHistory,
+                acousticEvent = acousticEvent,
                 forceMockMode = forceMockMode,
                 onForceMockModeChange = { viewModel.setForceMockMode(it) },
                 isDarkTheme = darkTheme,

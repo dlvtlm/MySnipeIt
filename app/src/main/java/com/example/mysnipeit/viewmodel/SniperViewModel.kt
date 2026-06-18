@@ -179,6 +179,11 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     // [firingSolution] below). The repository flow stays in place in case
     // the Pi still sends it; it just isn't exposed to the UI anymore.
     val systemStatus: StateFlow<SystemStatus> = repository.systemStatus
+    // Raw acoustic events from the Pi's 4-mic TDOA module. The dashboard
+    // alert UI (added in a later commit) consumes a derived flow that
+    // applies dedupe + auto-dismiss; this raw flow is what the Diagnostics
+    // LIVE SENSORS pane shows so the operator can see actual flag state.
+    val acousticEvent: StateFlow<AcousticEvent?> = repository.acousticEvent
 
     // --- Sensor latching + history -----------------------------------------
     // When the Pi reports a sub-frame with valid=false, the dashboard would

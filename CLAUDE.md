@@ -93,6 +93,7 @@ Exposed from `SniperViewModel`:
 - `sensorData: StateFlow<SensorData?>` — RAW stream straight from the Pi; consumed by the Diagnostics LIVE SENSORS pane so the operator sees actual valid flags.
 - `latchedSensorData: StateFlow<SensorData?>` — sticky version of `sensorData`: each sub-frame holds its last VALID reading for up to `sensorLatchTimeoutMs` (default 5 s; tunable on `SniperViewModel`) before falling back to "—". Dashboard consumes this. Wind speed + direction latch independently (two valid flags), and the compass only latches when `heading_deg` is non-null so a missing heading is never substituted as `0°`.
 - `sensorHistory: StateFlow<List<SensorData>>` — rolling window of the last 10 raw frames (oldest first). Powers the Diagnostics LIVE SENSORS history strip.
+- `acousticEvent: StateFlow<AcousticEvent?>` — latest TDOA detection from the Pi's 4-mic module (separate WS message, not part of `ddl_frame`). Single-slot — dedupe/timeout/alert state is in a later commit on the `acoustic-alerts` branch.
 - `detectedTargets: StateFlow<List<DetectedTarget>>` — post-pacer/tracker output, NOT raw WS payload
 - `shootingSolution: StateFlow<ShootingSolution?>`
 - `systemStatus: StateFlow<SystemStatus>`
@@ -121,6 +122,7 @@ No Nav Compose graph — `SniperApp` does a manual `when (uiState.currentScreen)
 - `shooting_solution` — `{targetId, azimuth, elevation, windageAdjustment, elevationAdjustment, confidence, timestamp}`.
 - `stream_ready` — `{rtsp_port, stream_name}` → builds `rtspStreamUrl` and flips `streamReady`.
 - `system_status` — direct deserialize into `SystemStatus`.
+- `acoustic_event` — `{type, timestamp_us, azimuth_deg, confidence, peak_amplitude, duration_ms, valid}`. Single TDOA detection from the Pi's 4-mic module. `azimuth_deg` is in the **mic-array's own frame** (the array is bolted to the fixed tripod, doesn't move with the servos) — convert to world bearing via `compass_heading + RigGeometry.MIC_ARRAY_OFFSET_DEG + azimuth_deg`. Currently exposed as raw `acousticEvent: StateFlow<AcousticEvent?>` only; the dedupe + auto-dismiss alert UI is wired in later commits on this branch.
 
 ### Detection pipeline (do not break this)
 
@@ -179,7 +181,7 @@ Runtime permission flow: `MainActivity.ensureLocationPermission()` checks `ACCES
 - **Hardcoded video resolution** — 1920×1080 in `TacticalVideoPlayer.kt`. If the Pi ever changes resolution, this breaks bbox scaling.
 - **`previousScreen` nav is a hack** — manual back-stack tracking instead of Nav Compose. Tolerable for 5 screens, would need replacing if nav gets richer.
 - **Almost no tests** — `ExampleInstrumentedTest`/`ExampleUnitTest` are unmodified AS templates. The one real suite is `TargetLocalizerTest` (pure-math geodesy for the ballistics localizer).
-- **`RigGeometry` constants are UNVERIFIED** — `TargetLocalizer.kt` assumes compass on the fixed base, servo pan/tilt centered at 90°, declination 0. One field test against the real rig must confirm/flip these; tests in `TargetLocalizerTest` encode the same assumptions.
+- **`RigGeometry` constants are UNVERIFIED** — `TargetLocalizer.kt` assumes compass on the fixed base, servo pan/tilt centered at 90°, declination 0, and `MIC_ARRAY_OFFSET_DEG = 0` (the constant added for acoustic-event world-bearing math, valid only when the mic array's azimuth-zero axis is mechanically aligned with the compass's north reference — measure on the assembled rig, hard-code, done). One field test against the real rig must confirm/flip these; tests in `TargetLocalizerTest` encode the same assumptions.
 - **Hardcoded device list** — `availableDevices` in `SniperViewModel` is a fixed 4 entries. Real device discovery isn't implemented.
 - **Strings are mostly inlined** — `res/values/strings.xml` only has `app_name`. Most UI strings (chip labels, button text, etc.) are hardcoded literals in Composables. Not translation-ready.
 - **`compass.heading_deg` can be JSON `null`** — the Pi's C `build_json` emits the literal token `null` (not a number) when the magnetometer hasn't fixed yet. `CompassFrame.headingDeg` is therefore `Float?`. Always read it via `compassHeadingDeg()` which gates on both `valid` and non-null; never treat a missing heading as `0°` (true north).
