@@ -57,16 +57,19 @@ fun AudioAlertOverlay(
     val remainingSec = ((alert.firstSeenAtMs + timeoutMs - nowMs) / 1000)
         .coerceAtLeast(0L)
 
-    if (alert.isInteractive) {
-        AudioAlertCard(
+    when {
+        // Accepted alerts override both modes — operator just tapped
+        // SLEW and we owe them a beat of visual confirmation before the
+        // card vanishes.
+        alert.isAccepted -> AudioAlertSlewingCard(alert = alert, modifier = modifier)
+        alert.isInteractive -> AudioAlertCard(
             alert = alert,
             remainingSec = remainingSec,
             onAccept = onAccept,
             onDismiss = onDismiss,
             modifier = modifier,
         )
-    } else {
-        AudioAlertChip(
+        else -> AudioAlertChip(
             alert = alert,
             remainingSec = remainingSec,
             modifier = modifier,
@@ -203,6 +206,61 @@ private fun AlertButton(
             letterSpacing = 0.18.em,
             fontFamily = JetBrainsMono,
         )
+    }
+}
+
+// ----------------------------------------------------------------------------
+// Slewing notice (operator just tapped SLEW → brief confirmation card,
+// shown for ~1.5 s before the alert clears. Independent of isInteractive
+// so the operator gets the same confirmation whether they were in
+// card-mode or chip-mode at the moment of tap.)
+// ----------------------------------------------------------------------------
+@Composable
+private fun AudioAlertSlewingCard(
+    alert: AudioAlert,
+    modifier: Modifier = Modifier,
+) {
+    val t = LocalTactical.current
+    Column(
+        modifier = modifier
+            .width(responsiveDp(tablet = 260.dp, compact = 220.dp))
+            .background(t.videoChrome)
+            .border(1.dp, t.accent),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(t.accent.copy(alpha = 0.18f))
+                .padding(horizontal = 14.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                text = "♪  SLEWING",
+                color = t.accent,
+                fontSize = 11.sp,
+                letterSpacing = 0.2.em,
+                fontFamily = JetBrainsMono,
+            )
+        }
+        Column(modifier = Modifier.padding(16.dp)) {
+            Lbl(text = "BEARING")
+            Spacer(Modifier.height(4.dp))
+            Text(
+                text = "${alert.bearingDeg.toInt()}°",
+                color = t.ink,
+                fontSize = 28.sp,
+                letterSpacing = 0.04.em,
+                fontFamily = JetBrainsMono,
+            )
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = "AUTONOMOUS SCAN ENGAGED",
+                color = t.inkDim,
+                fontSize = 10.sp,
+                letterSpacing = 0.14.em,
+                fontFamily = JetBrainsMono,
+            )
+        }
     }
 }
 

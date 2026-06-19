@@ -30,4 +30,11 @@ data class AudioAlert(
     val firstSeenAtMs: Long,
     val lastUpdatedAtMs: Long,
     val isInteractive: Boolean,
+    // When the operator hits SLEW the alert isn't cleared immediately —
+    // instead isAccepted flips true and the card briefly shows a
+    // "SLEWING…" notice (~1.5 s) before being swept away. Gives the
+    // operator visual confirmation that the tap registered and the Pi
+    // is now moving, rather than the alert just vanishing.
+    val isAccepted: Boolean = false,
+    val acceptedAtMs: Long = 0L,
 )

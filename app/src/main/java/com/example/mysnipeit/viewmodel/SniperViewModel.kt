@@ -398,6 +398,11 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     /** How long an explicit DISMISS suppresses re-firing for the same source. */
     private val dismissDebounceMs: Long = 30_000L
 
+    /** How long the "SLEWING TO X°…" notice stays on screen after the
+     *  operator hits SLEW, before the alert is swept away. Long enough
+     *  to confirm the tap registered; short enough not to clutter. */
+    private val slewNoticeMs: Long = 1_500L
+
     private val _activeAudioAlert = MutableStateFlow<AudioAlert?>(null)
     /**
      * Derived alert with dedupe + auto-dismiss + lock-aware render mode.
@@ -486,25 +491,41 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
 
     private fun sweepAlertTimeout() {
         val current = _activeAudioAlert.value ?: return
-        if (System.currentTimeMillis() - current.firstSeenAtMs > audioAlertTimeoutMs) {
+        val now = System.currentTimeMillis()
+        // Accepted alerts get a brief "SLEWING…" notice then clear,
+        // independent of the main 20 s auto-dismiss timer.
+        if (current.isAccepted && now - current.acceptedAtMs > slewNoticeMs) {
+            _activeAudioAlert.value = null
+            return
+        }
+        if (now - current.firstSeenAtMs > audioAlertTimeoutMs) {
             _activeAudioAlert.value = null
         }
     }
 
     /**
-     * Operator accepted the alert (tapped SLEW). Clears the alert and
-     * returns the world bearing for the caller to forward to the Pi's
-     * slew command (wired in step 5). Returns null when there's no
-     * active alert to accept.
+     * Operator tapped SLEW. Marks the alert accepted (so the UI flips
+     * to the "SLEWING TO X°…" notice), sends the slew command to the
+     * Pi via the repository (the actual contract — `slew_to_bearing`
+     * vs `set_servo_angles` — is picked by [SniperRepository.SLEW_COMMAND_MODE]),
+     * and lets the periodic sweep clear the alert after [slewNoticeMs].
      *
      * No dismiss-debounce on accept — if events keep arriving from the
      * accepted direction while the Pi auto-scans there, that's expected
      * (the operator chose to engage that direction) and the next event
      * will alert normally.
+     *
+     * Returns the bearing so callers can log / display it; the side
+     * effect (HTTP command + alert flip) is what matters.
      */
     fun acceptAudioAlert(): Double? {
         val current = _activeAudioAlert.value ?: return null
-        _activeAudioAlert.value = null
+        val compass = latchedSensorData.value.compassHeadingDeg()
+        repository.slewToAudioBearing(current.bearingDeg, compass)
+        _activeAudioAlert.value = current.copy(
+            isAccepted = true,
+            acceptedAtMs = System.currentTimeMillis(),
+        )
         return current.bearingDeg
     }
 
