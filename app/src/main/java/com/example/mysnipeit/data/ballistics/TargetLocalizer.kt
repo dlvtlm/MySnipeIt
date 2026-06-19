@@ -61,20 +61,15 @@ object RigGeometry {
      */
     const val MAGNETIC_DECLINATION_DEG = 0.0
 
-    /**
-     * Angular offset (deg, clockwise positive) between the compass's
-     * north-reference axis and the mic array's azimuth-zero axis. Both
-     * are bolted to the fixed tripod so this is a one-time mechanical
-     * constant — set when the array is mounted, never changes at
-     * runtime.
-     *
-     * Stays at 0.0 by **design intent**: the mic array is mechanically
-     * aligned so that its 0° axis is parallel to the compass's north
-     * reference. Field test of the assembled rig may reveal a small
-     * mounting error (a few degrees) — measure once and update this
-     * constant, no code changes anywhere else.
-     */
-    const val MIC_ARRAY_OFFSET_DEG = 0.0
+    // NB: there's no compass↔mic-array constant offset. With the compass
+    // on the moving head and the mic array on the fixed tripod, that
+    // relationship isn't a mechanical constant — it changes every time
+    // the head rotates. The acoustic-bearing path resolves this by
+    // capturing the compass reading once at setup time (via
+    // SniperViewModel.calibrateTripodWorldBearing), when the head is
+    // centred at servo 90° / pointing at the tripod-forward direction.
+    // That captured value plays the role of the offset for the lifetime
+    // of the calibration; operator re-calibrates after moving the rig.
 
     /**
      * Angular offset (deg) between the mic array's azimuth-zero axis

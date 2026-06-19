@@ -70,6 +70,42 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
         prefs.edit().putString("rifle_id", id).apply()
     }
 
+    // --- Tripod world bearing (operator-calibrated) -------------------------
+    // Captured once at setup time when the operator centres the camera at
+    // servo 90° (tripod-forward) and taps MENU → Calibrate Bearing. At that
+    // moment, the compass — which is on the moving head, not the fixed
+    // tripod — reads the world bearing of the tripod-forward direction,
+    // which is also the world bearing of the mic array's 0° axis. This
+    // captured value is what acoustic events get added to.
+    //
+    // Persisted to SharedPreferences (Float) so it survives app restart;
+    // operator re-calibrates after moving the tripod.
+    private val _tripodWorldBearingDeg = MutableStateFlow<Double?>(
+        if (prefs.contains("tripod_world_bearing_deg"))
+            prefs.getFloat("tripod_world_bearing_deg", 0f).toDouble()
+        else null
+    )
+    val tripodWorldBearingDeg: StateFlow<Double?> = _tripodWorldBearingDeg.asStateFlow()
+
+    /**
+     * Capture the current (latched) compass heading and save it as the
+     * tripod-forward world bearing. Caller is responsible for having the
+     * camera centred at servo 90° / pointing at tripod-forward; the
+     * compass at that moment IS the bearing we want to store.
+     *
+     * Returns the captured value, or null when no compass fix is
+     * available — the UI shows "no fix" rather than silently saving
+     * garbage.
+     */
+    fun calibrateTripodWorldBearing(): Double? {
+        val compass = latchedSensorData.value.compassHeadingDeg()?.toDouble()
+            ?: return null
+        _tripodWorldBearingDeg.value = compass
+        prefs.edit().putFloat("tripod_world_bearing_deg", compass.toFloat()).apply()
+        Log.d("SniperViewModel", "Tripod world bearing calibrated to $compass°")
+        return compass
+    }
+
     // --- Device GPS --------------------------------------------------------
     // Real device location, populated once the runtime location permission
     // has been granted (see MainActivity). Null until then OR while we wait
@@ -434,11 +470,16 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun applyAcousticEvent(event: AcousticEvent?) {
-        // worldBearingFromAcousticEvent does the valid-flag + null-compass
-        // checks for us; the result is non-null only when we can place the
-        // sound source in the world.
-        val compass = latchedSensorData.value.compassHeadingDeg()
-        val bearing = worldBearingFromAcousticEvent(event, compass) ?: return
+        // worldBearingFromAcousticEvent does the valid-flag + uncalibrated
+        // checks for us; the result is non-null only when the operator has
+        // calibrated the tripod world bearing AND the event itself is
+        // valid. If the operator hasn't calibrated yet, no alert fires —
+        // the bearing would be unknowable and showing a card without one
+        // would be misleading. The Diagnostics LIVE SENSORS pane still
+        // surfaces the raw event so the operator knows events ARE arriving
+        // and can go calibrate via MENU → Calibrate Bearing.
+        val bearing = worldBearingFromAcousticEvent(event, _tripodWorldBearingDeg.value)
+            ?: return
         val now = System.currentTimeMillis()
 
         // Suppress if the operator just dismissed a same-source event.

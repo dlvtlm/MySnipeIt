@@ -6,11 +6,10 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
- * Pure-math tests for [worldBearingFromAcousticEvent]. All cases assume
- * the current [RigGeometry.MIC_ARRAY_OFFSET_DEG] default (0.0). If the
- * physical rig measurement flips that constant, these tests will fail
- * loudly — that's the desired behaviour: the field-calibration value
- * must be plugged in deliberately, not absorbed silently.
+ * Pure-math tests for [worldBearingFromAcousticEvent]. The second
+ * argument is the operator-captured tripod-forward world bearing
+ * (saved at setup time when the camera was centred at servo 90°),
+ * NOT a live compass reading.
  */
 class AcousticBearingTest {
 
@@ -27,60 +26,66 @@ class AcousticBearingTest {
     // --- Happy path ----------------------------------------------------------
 
     @Test
-    fun `compass 0, event 0 -> world 0`() {
-        assertEquals(0.0, worldBearingFromAcousticEvent(event(0f), 0f)!!, 1e-9)
+    fun `tripod 0, event 0 -> world 0`() {
+        assertEquals(0.0, worldBearingFromAcousticEvent(event(0f), 0.0)!!, 1e-9)
     }
 
     @Test
-    fun `compass 0, event 42 -> world 42`() {
-        assertEquals(42.0, worldBearingFromAcousticEvent(event(42f), 0f)!!, 1e-9)
+    fun `tripod 0, event 42 -> world 42`() {
+        assertEquals(42.0, worldBearingFromAcousticEvent(event(42f), 0.0)!!, 1e-9)
     }
 
     @Test
-    fun `compass 90, event 30 -> world 120`() {
-        assertEquals(120.0, worldBearingFromAcousticEvent(event(30f), 90f)!!, 1e-9)
-    }
-
-    // --- Wraparound past 360 -------------------------------------------------
-
-    @Test
-    fun `compass 350 + event 20 wraps to 10`() {
-        assertEquals(10.0, worldBearingFromAcousticEvent(event(20f), 350f)!!, 1e-9)
+    fun `tripod 90, event 30 -> world 120`() {
+        assertEquals(120.0, worldBearingFromAcousticEvent(event(30f), 90.0)!!, 1e-9)
     }
 
     @Test
-    fun `compass 300 + event 200 wraps to 140`() {
-        assertEquals(140.0, worldBearingFromAcousticEvent(event(200f), 300f)!!, 1e-9)
+    fun `mic-frame negative azim resolves correctly`() {
+        // Mic array reports −60° = "60° to the left of tripod-forward".
+        // Tripod-forward at 100° → sound at 100 − 60 = 40°.
+        assertEquals(40.0, worldBearingFromAcousticEvent(event(-60f), 100.0)!!, 1e-9)
+    }
+
+    // --- Wraparound past 360 / below 0 ---------------------------------------
+
+    @Test
+    fun `tripod 350 + event 20 wraps to 10`() {
+        assertEquals(10.0, worldBearingFromAcousticEvent(event(20f), 350.0)!!, 1e-9)
     }
 
     @Test
-    fun `compass 359_5 + event 1 wraps to 0_5`() {
-        assertEquals(0.5, worldBearingFromAcousticEvent(event(1f), 359.5f)!!, 1e-5)
+    fun `tripod 30 + event -60 wraps to 330`() {
+        // Tripod at 30° (a bit east of north) + sound 60° left = 330° (NW).
+        assertEquals(330.0, worldBearingFromAcousticEvent(event(-60f), 30.0)!!, 1e-9)
+    }
+
+    @Test
+    fun `tripod 359_5 + event 1 wraps to 0_5`() {
+        assertEquals(0.5, worldBearingFromAcousticEvent(event(1f), 359.5)!!, 1e-5)
     }
 
     // --- Null guards (must never return a bearing) ---------------------------
 
     @Test
     fun `null event returns null`() {
-        assertNull(worldBearingFromAcousticEvent(null, 100f))
+        assertNull(worldBearingFromAcousticEvent(null, 100.0))
     }
 
     @Test
-    fun `null compass returns null`() {
-        // The "magnetometer not fixed yet" case — bearing must never be
-        // silently treated as 0° (true north).
+    fun `null tripod bearing means uncalibrated, returns null`() {
+        // If the operator hasn't calibrated yet, the world bearing is
+        // unknowable. Must never substitute 0° (true north) silently.
         assertNull(worldBearingFromAcousticEvent(event(42f), null))
     }
 
     @Test
     fun `valid=false on the event returns null`() {
-        assertNull(worldBearingFromAcousticEvent(event(42f, valid = false), 0f))
+        assertNull(worldBearingFromAcousticEvent(event(42f, valid = false), 0.0))
     }
 
     @Test
-    fun `null event takes precedence over null compass`() {
-        // Defensive: even with both nullable, we don't accidentally return
-        // 0 or NaN. Both paths return null cleanly.
+    fun `null event takes precedence over null tripod`() {
         assertNull(worldBearingFromAcousticEvent(null, null))
     }
 
@@ -89,12 +94,13 @@ class AcousticBearingTest {
     @Test
     fun `result is always in 0 to 360 range`() {
         val cases = listOf(
-            0f to 0f, 90f to 30f, 180f to 200f, 359f to 359f, 350f to 20f,
-            0.5f to 359.9f, 1f to 360f,  // event=360 should normalise too
+            0.0 to 0f, 90.0 to 30f, 180.0 to 200f, 359.0 to 359f, 350.0 to 20f,
+            0.5 to 359.9f, 1.0 to 360f,  // event=360 normalises
+            45.0 to -90f, 200.0 to -200f,  // negative mic azim wraps
         )
-        for ((compass, azim) in cases) {
-            val r = worldBearingFromAcousticEvent(event(azim), compass)!!
-            assert(r >= 0.0 && r < 360.0) { "out-of-range bearing $r for compass=$compass azim=$azim" }
+        for ((tripod, azim) in cases) {
+            val r = worldBearingFromAcousticEvent(event(azim), tripod)!!
+            assert(r >= 0.0 && r < 360.0) { "out-of-range bearing $r for tripod=$tripod azim=$azim" }
         }
     }
 }

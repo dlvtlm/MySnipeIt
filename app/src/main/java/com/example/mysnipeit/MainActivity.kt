@@ -26,6 +26,8 @@ import com.example.mysnipeit.ui.device.DeviceSelectionScreen
 import com.example.mysnipeit.ui.map.MapScreen
 import com.example.mysnipeit.ui.dashboard.DashboardScreen
 import android.util.Log
+import com.example.mysnipeit.data.models.compassHeadingDeg
+import com.example.mysnipeit.ui.dashboard.CalibrateBearingDialog
 import com.example.mysnipeit.ui.dashboard.LoadoutDialog
 import com.example.mysnipeit.ui.diagnostics.DiagnosticsScreen
 
@@ -127,11 +129,17 @@ fun SniperApp(viewModel: SniperViewModel) {
     // no navigation away from it.
     val showMenu = uiState.dashboardMenuOpen
     var showLoadout by remember { mutableStateOf(false) }
+    var showCalibrate by remember { mutableStateOf(false) }
 
     // Ballistic loadout — persisted cartridge + rifle profile picks; chosen
     // via MENU → Loadout on the dashboard, consumed by the ballistic solver.
     val selectedCartridge by viewModel.selectedCartridge.collectAsStateWithLifecycle()
     val selectedRifle by viewModel.selectedRifle.collectAsStateWithLifecycle()
+
+    // Tripod world bearing — operator-calibrated offset that converts mic-
+    // frame acoustic-event bearings into true-north world bearings. Saved
+    // via MENU → Calibrate Bearing.
+    val tripodWorldBearingDeg by viewModel.tripodWorldBearingDeg.collectAsStateWithLifecycle()
 
     // Diagnostics → MOCK MODE toggle. When ON the app streams synthetic
     // sensor data anchored to the operator's GPS so the ballistic
@@ -220,6 +228,10 @@ fun SniperApp(viewModel: SniperViewModel) {
                         viewModel.setDashboardMenuOpen(false)
                         showLoadout = true
                     },
+                    onCalibrateClick = {
+                        viewModel.setDashboardMenuOpen(false)
+                        showCalibrate = true
+                    },
                 )
             }
 
@@ -230,6 +242,15 @@ fun SniperApp(viewModel: SniperViewModel) {
                     onCartridgeSelect = { viewModel.selectCartridge(it) },
                     onRifleSelect = { viewModel.selectRifle(it) },
                     onDismiss = { showLoadout = false },
+                )
+            }
+
+            if (showCalibrate) {
+                CalibrateBearingDialog(
+                    liveCompassDeg = latchedSensorData.compassHeadingDeg(),
+                    currentCalibrationDeg = tripodWorldBearingDeg,
+                    onCapture = { viewModel.calibrateTripodWorldBearing() },
+                    onDismiss = { showCalibrate = false },
                 )
             }
         }
@@ -254,6 +275,7 @@ fun DashboardMenu(
     onDismiss: () -> Unit,
     onDiagnosticsClick: () -> Unit,
     onLoadoutClick: () -> Unit,
+    onCalibrateClick: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -267,6 +289,7 @@ fun DashboardMenu(
             Column {
                 MenuEntry(icon = "⚙ ", label = "Diagnostics", onClick = onDiagnosticsClick)
                 MenuEntry(icon = "⌖ ", label = "Loadout", onClick = onLoadoutClick)
+                MenuEntry(icon = "🧭 ", label = "Calibrate Bearing", onClick = onCalibrateClick)
             }
         },
         confirmButton = {
