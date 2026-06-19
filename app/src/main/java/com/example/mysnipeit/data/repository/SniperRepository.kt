@@ -143,22 +143,27 @@ class SniperRepository {
     fun stopForcedMock() = raspberryPiClient.stopForcedMock()
 
     // --- Acoustic-alert slew -----------------------------------------------
-    // Branches on SLEW_COMMAND_MODE so the Pi-side dev's choice (still TBD
-    // when this lands) is a one-line change here.
+    // Branches on SLEW_COMMAND_MODE so the Pi-side dev's choice is a
+    // one-line change here.
 
     /**
-     * Ask the Pi to slew the camera toward an acoustic contact's world
-     * bearing. Called by [com.example.mysnipeit.viewmodel.SniperViewModel.acceptAudioAlert].
+     * Ask the Pi to slew the camera toward an acoustic contact. Called
+     * by [com.example.mysnipeit.viewmodel.SniperViewModel.acceptAudioAlert].
      *
-     * @param worldBearingDeg true-north bearing of the sound source, 0-360.
-     * @param compassHeadingDeg current compass heading — required for the
-     *   [SlewCommandMode.SET_SERVO_ANGLES] path to convert the world
-     *   bearing into servo coordinates. Ignored in
-     *   [SlewCommandMode.SLEW_TO_BEARING] mode. Pass null only if the
-     *   compass isn't fixed; the SET_SERVO_ANGLES branch will then no-op
-     *   rather than send a garbage servo target.
+     * Takes BOTH the raw mic-frame azimuth AND the world bearing so each
+     * contract option uses its canonical input without any redundant
+     * round-trip through the other:
+     *
+     *  - [SlewCommandMode.SET_SERVO_ANGLES] uses [rawMicAzimuthDeg]
+     *    directly with [RigGeometry.MIC_TO_SERVO_OFFSET_DEG] — no
+     *    compass involved, since the mic array and the servo are both
+     *    bolted to the same fixed tripod (they share a frame, just
+     *    rotated by 90°). Robust against stale/missing compass.
+     *  - [SlewCommandMode.SLEW_TO_BEARING] uses [worldBearingDeg], so
+     *    the Pi can resolve servo angles using its own freshest compass
+     *    reading at the moment of slew.
      */
-    fun slewToAudioBearing(worldBearingDeg: Double, compassHeadingDeg: Float?) {
+    fun slewToAcousticContact(rawMicAzimuthDeg: Double, worldBearingDeg: Double) {
         scope.launch {
             val ip = currentIpAddress ?: return@launch
             when (SLEW_COMMAND_MODE) {
@@ -170,15 +175,15 @@ class SniperRepository {
                     )
                 }
                 SlewCommandMode.SET_SERVO_ANGLES -> {
-                    val compass = compassHeadingDeg?.toDouble() ?: return@launch
-                    // Relative bearing in [-180, +180] → servo H in [0, 180].
-                    val rel = ((worldBearingDeg - compass + 180.0) % 360.0 + 360.0) % 360.0 - 180.0
-                    val servoH = (RigGeometry.SERVO_HORIZONTAL_CENTER_DEG + rel)
+                    // Direct mic-frame → servo-frame conversion. No
+                    // compass, no world bearing, no detour: the two
+                    // frames are mechanically related by a single
+                    // constant offset (mic 0° ↔ servo 90°).
+                    val servoH = (rawMicAzimuthDeg + RigGeometry.MIC_TO_SERVO_OFFSET_DEG)
                         .coerceIn(0.0, 180.0)
-                    // We can't infer elevation from a mic-only contact;
-                    // default to level (servo vertical at the configured
-                    // horizon angle). Pi-side autonomous scan can sweep
-                    // from there.
+                    // Mic-only contact has no elevation info — default
+                    // to level (servo center vertical). Pi-side
+                    // autonomous scan can sweep up/down from there.
                     val servoV = RigGeometry.SERVO_VERTICAL_LEVEL_DEG
                     raspberryPiClient.sendCommand(
                         ipAddress = ip,
@@ -196,10 +201,11 @@ class SniperRepository {
     companion object {
         /**
          * The contract the app uses to ask the Pi to slew. **Flip this
-         * one line** to switch between the two options once the Pi-side
-         * dev has decided. Default is the recommended option (intent-
-         * based, Pi owns the geometry).
+         * one line** to switch between the two options. Picked by the
+         * Pi-side dev: `SET_SERVO_ANGLES` — the app pre-computes the
+         * servo angle (mic_azim + 90°, clamped to 0..180) and the Pi
+         * just moves the servos. No compass involved in the slew path.
          */
-        val SLEW_COMMAND_MODE: SlewCommandMode = SlewCommandMode.SLEW_TO_BEARING
+        val SLEW_COMMAND_MODE: SlewCommandMode = SlewCommandMode.SET_SERVO_ANGLES
     }
 }

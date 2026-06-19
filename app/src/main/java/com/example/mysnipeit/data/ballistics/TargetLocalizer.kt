@@ -57,15 +57,34 @@ object RigGeometry {
 
     /**
      * Angular offset (deg, clockwise positive) between the compass's
-     * north-reference axis and the mic array's azimuth-zero axis. Both are
-     * bolted to the fixed tripod so this is a hardware constant — measure
-     * it once after assembly, hard-code, done.
+     * north-reference axis and the mic array's azimuth-zero axis. Both
+     * are bolted to the fixed tripod so this is a one-time mechanical
+     * constant — set when the array is mounted, never changes at
+     * runtime.
      *
-     * UNVERIFIED — physical rig hasn't been built. Stays at 0 until the
-     * mic array is mounted; flip to the measured value and acoustic-event
-     * world bearings will be correct without any other code change.
+     * Stays at 0.0 by **design intent**: the mic array is mechanically
+     * aligned so that its 0° axis is parallel to the compass's north
+     * reference. Field test of the assembled rig may reveal a small
+     * mounting error (a few degrees) — measure once and update this
+     * constant, no code changes anywhere else.
      */
     const val MIC_ARRAY_OFFSET_DEG = 0.0
+
+    /**
+     * Angular offset (deg) between the mic array's azimuth-zero axis
+     * and the pan servo's center (90°) position. The mic array and the
+     * servo are both bolted to the fixed tripod with mic 0° aligned to
+     * servo 90° — so the conversion is:
+     *
+     *   servo_horizontal_deg = mic_azim_deg + MIC_TO_SERVO_OFFSET_DEG
+     *
+     * Used by the SET_SERVO_ANGLES slew path (see
+     * [com.example.mysnipeit.data.repository.SlewCommandMode]).
+     * Independent of [MIC_ARRAY_OFFSET_DEG]: this one is about the
+     * mic↔servo relationship (no compass), that one is about the
+     * compass↔mic relationship (used for display).
+     */
+    const val MIC_TO_SERVO_OFFSET_DEG = 90.0
 }
 
 /** Mean Earth radius (m) — fine for the equirectangular projection below. */

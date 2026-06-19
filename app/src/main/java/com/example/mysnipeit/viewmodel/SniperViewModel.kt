@@ -520,8 +520,12 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
      */
     fun acceptAudioAlert(): Double? {
         val current = _activeAudioAlert.value ?: return null
-        val compass = latchedSensorData.value.compassHeadingDeg()
-        repository.slewToAudioBearing(current.bearingDeg, compass)
+        // Send BOTH so SniperRepository can pick the right one per
+        // SLEW_COMMAND_MODE without recomputing anything.
+        repository.slewToAcousticContact(
+            rawMicAzimuthDeg = current.rawAzimuthDeg,
+            worldBearingDeg = current.bearingDeg,
+        )
         _activeAudioAlert.value = current.copy(
             isAccepted = true,
             acceptedAtMs = System.currentTimeMillis(),
