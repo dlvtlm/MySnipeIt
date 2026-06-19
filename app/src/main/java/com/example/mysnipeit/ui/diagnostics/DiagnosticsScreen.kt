@@ -636,6 +636,7 @@ private fun MockModePane(
                 "Wind    — 0–8 m/s, random direction (both channels VALID)",
                 "Atmos.  — 20–30 °C, 50–70 % RH",
                 "Targets — 2 mock detections (T1 HUMAN, T2 VEHICLE) over a mock video",
+                "Audio   — synthetic acoustic_event every 20-40 s at random azimuth, drives the alert card",
             ).forEach { line ->
                 Text(
                     text = "•  $line",

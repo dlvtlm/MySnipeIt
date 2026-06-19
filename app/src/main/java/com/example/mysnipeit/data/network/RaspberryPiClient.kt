@@ -105,6 +105,10 @@ class RaspberryPiClient {
 
     // Mock data generator
     private var mockDataJob: Job? = null
+    // Synthetic acoustic-event generator, ticks on its own schedule
+    // (every 20-40 s, not every 1.5 s like the sensor frames) so the
+    // alert UI can be exercised end-to-end without a Pi.
+    private var mockAcousticJob: Job? = null
 
     // --- Forced mock anchor -------------------------------------------------
     // When force-mock mode is enabled from the Diagnostics screen, the mock
@@ -142,8 +146,11 @@ class RaspberryPiClient {
         Log.d(TAG, "Forced mock mode DISABLED")
         mockDataJob?.cancel()
         mockDataJob = null
+        mockAcousticJob?.cancel()
+        mockAcousticJob = null
         _sensorData.value = null
         _detectedTargets.value = emptyList()
+        _acousticEvent.value = null
         updateSystemStatus(ConnectionState.DISCONNECTED)
     }
 
@@ -464,6 +471,7 @@ class RaspberryPiClient {
      */
     private fun startMockDataGeneration() {
         Log.d(TAG, " Starting mock data generation")
+        startMockAcousticGeneration()
 
         mockDataJob?.cancel()
         mockDataJob = scope.launch {
@@ -597,6 +605,41 @@ class RaspberryPiClient {
         }
     }
 
+    /**
+     * Synthetic acoustic-event generator. Fires a single `valid=true`
+     * AcousticEvent at a random azimuth on a 20-40 s random interval so
+     * the dashboard's alert UI (dedupe, timeout, accept/dismiss, lock
+     * downgrade) can be exercised offline.
+     *
+     * Runs alongside [startMockDataGeneration]'s sensor/target loop;
+     * lifetime is tied to it via [stopForcedMock] and [disconnect].
+     */
+    private fun startMockAcousticGeneration() {
+        mockAcousticJob?.cancel()
+        mockAcousticJob = scope.launch {
+            // First event waits a few seconds so the operator can see
+            // the dashboard settle before the alert pops.
+            delay(5_000)
+            while (isActive) {
+                _acousticEvent.value = AcousticEvent(
+                    type = "acoustic_event",
+                    timestampUs = System.nanoTime() / 1000L,
+                    azimuthDeg = Math.random().toFloat() * 360f,
+                    confidence = 0.6f + Math.random().toFloat() * 0.4f,
+                    peakAmplitude = 0.5f + Math.random().toFloat() * 0.5f,
+                    durationMs = 1f + Math.random().toFloat() * 5f,
+                    valid = true,
+                )
+                Log.d(TAG, "Mock acoustic event emitted (azim=${_acousticEvent.value?.azimuthDeg})")
+                // Random gap. 20-40s is wide enough that the operator
+                // can see the alert auto-dismiss (20s) and the post-
+                // dismiss debounce (30s) without events stepping on
+                // each other.
+                delay(20_000L + (Math.random() * 20_000L).toLong())
+            }
+        }
+    }
+
     fun disconnect() {
         Log.d(TAG, "🔌 Disconnecting from RPi")
 
@@ -607,6 +650,8 @@ class RaspberryPiClient {
 
         mockDataJob?.cancel()
         mockDataJob = null
+        mockAcousticJob?.cancel()
+        mockAcousticJob = null
 
         // Drain any pending detections from the pacer queue and reset
         // staleness tracking so the next connection starts fresh.
@@ -624,6 +669,7 @@ class RaspberryPiClient {
         _sensorData.value = null
         _detectedTargets.value = emptyList()
         _shootingSolution.value = null
+        _acousticEvent.value = null
     }
 
     fun isConnected(): Boolean {
