@@ -22,10 +22,10 @@ data class TargetLocation(
 )
 
 /**
- * Rig-geometry assumptions — UNVERIFIED against the physical rig (the
- * mounting details weren't known at the time of writing). Each constant is
- * independently correctable after one field test; nothing else in the code
- * depends on the actual values.
+ * Rig-geometry constants. Each value reflects the physical rig per the
+ * Pi-side team's mechanical design. Constants are independently
+ * correctable after a field test if anything turns out misaligned;
+ * nothing else in the code depends on the actual values.
  */
 object RigGeometry {
     /**
@@ -34,8 +34,14 @@ object RigGeometry {
      *    the camera's bearing = compass heading + (servo pan − center).
      *  - false = on the MOVING HEAD: the compass already points where the
      *    camera looks, so the servo pan angle is ignored for bearing.
+     *
+     * **`false` for the actual rig** — per Pi-side spec, the compass
+     * board is bolted to the camera arm (moving head), not the fixed
+     * tripod base. So the compass reading directly gives the camera's
+     * world-frame pointing direction at any moment; the rangefinder
+     * shares that direction since it sits next to the camera.
      */
-    const val COMPASS_ON_FIXED_BASE = true
+    const val COMPASS_ON_FIXED_BASE = false
 
     /** Servo pan angle (deg) at which the camera faces the compass's forward axis. */
     const val SERVO_HORIZONTAL_CENTER_DEG = 90.0
