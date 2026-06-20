@@ -558,7 +558,7 @@ class RaspberryPiClient {
                     ),
                     DetectedTarget(
                         id = "T2",
-                        targetType = "VEHICLE",
+                        targetType = "DRONE",
                         confidence = 0.72f,
                         bbox = BoundingBox(
                             x = 1344,     // ~70% of 1920

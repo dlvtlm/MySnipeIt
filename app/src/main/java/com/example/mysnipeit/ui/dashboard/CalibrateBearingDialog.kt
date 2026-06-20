@@ -75,7 +75,7 @@ fun CalibrateBearingDialog(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Lbl(text = "🧭 CALIBRATE WORLD BEARING")
+                Lbl(text = "CALIBRATE WORLD BEARING")
                 CloseBtn(onDismiss)
             }
             Spacer(Modifier.height(14.dp))

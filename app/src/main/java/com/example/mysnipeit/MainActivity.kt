@@ -292,7 +292,7 @@ fun DashboardMenu(
             Column {
                 MenuEntry(icon = "⚙ ", label = "Diagnostics", onClick = onDiagnosticsClick)
                 MenuEntry(icon = "⌖ ", label = "Loadout", onClick = onLoadoutClick)
-                MenuEntry(icon = "🧭 ", label = "Calibrate Bearing", onClick = onCalibrateClick)
+                MenuEntry(icon = "⏱ ", label = "Calibrate Bearing", onClick = onCalibrateClick)
             }
         },
         confirmButton = {
