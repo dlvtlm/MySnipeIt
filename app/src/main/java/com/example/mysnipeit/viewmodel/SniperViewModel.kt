@@ -88,6 +88,19 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     val tripodWorldBearingDeg: StateFlow<Double?> = _tripodWorldBearingDeg.asStateFlow()
 
     /**
+     * Wall-clock time of the most recent successful calibration. Lets the
+     * UI render a "last calibrated: X min ago" hint without expiring the
+     * calibration itself — option (B) from the design conversation.
+     * Persisted alongside the value as `tripod_calibrated_at_ms`.
+     */
+    private val _tripodCalibratedAtMs = MutableStateFlow<Long?>(
+        if (prefs.contains("tripod_calibrated_at_ms"))
+            prefs.getLong("tripod_calibrated_at_ms", 0L).takeIf { it > 0L }
+        else null
+    )
+    val tripodCalibratedAtMs: StateFlow<Long?> = _tripodCalibratedAtMs.asStateFlow()
+
+    /**
      * Capture the current (latched) compass heading and save it as the
      * tripod-forward world bearing. Caller is responsible for having the
      * camera centred at servo 90° / pointing at tripod-forward; the
@@ -100,8 +113,13 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     fun calibrateTripodWorldBearing(): Double? {
         val compass = latchedSensorData.value.compassHeadingDeg()?.toDouble()
             ?: return null
+        val now = System.currentTimeMillis()
         _tripodWorldBearingDeg.value = compass
-        prefs.edit().putFloat("tripod_world_bearing_deg", compass.toFloat()).apply()
+        _tripodCalibratedAtMs.value = now
+        prefs.edit()
+            .putFloat("tripod_world_bearing_deg", compass.toFloat())
+            .putLong("tripod_calibrated_at_ms", now)
+            .apply()
         Log.d("SniperViewModel", "Tripod world bearing calibrated to $compass°")
         return compass
     }

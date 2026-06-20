@@ -6,6 +6,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -28,6 +33,7 @@ import com.example.mysnipeit.data.models.temperatureC
 import com.example.mysnipeit.data.models.windDirectionDeg
 import com.example.mysnipeit.data.models.windSpeedMps
 import com.example.mysnipeit.ui.theme.*
+import kotlinx.coroutines.delay
 
 /**
  * Operator HUD — redesigned to the design's "A layout + dense sensor bar"
@@ -57,6 +63,7 @@ fun DashboardScreen(
     audioAlertTimeoutMs: Long,
     onAudioAlertAccept: () -> Unit,
     onAudioAlertDismiss: () -> Unit,
+    tripodCalibratedAtMs: Long?,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onTargetSelect: (String) -> Unit = {},
@@ -96,6 +103,13 @@ fun DashboardScreen(
                     fontFamily = JetBrainsMono,
                 )
             }
+
+            // World-bearing calibration age. Shown only when calibration
+            // exists; tone gets warmer (Warn / Danger) as it ages so the
+            // operator gets a visual nudge to recalibrate after long
+            // sessions. The calibration itself NEVER expires — this is
+            // purely a hint.
+            tripodCalibratedAtMs?.let { CalibrationAgeChip(it) }
 
             // Menu (kept; opens the Diagnostics shortcut dialog from MainActivity)
             TopBarIconButton(label = "MENU", onClick = onMenuClick)
@@ -175,6 +189,39 @@ fun DashboardScreen(
             )
         }
     }
+}
+
+// ----------------------------------------------------------------------------
+// World-bearing calibration age chip
+//
+// Tone bands:
+//   < 30 min   On     (fresh)
+//   30-90 min  Warn   (consider recalibrating)
+//   > 90 min   Danger (probably stale; recalibrate)
+//
+// Bands are POC defaults — operator can recalibrate at any time. They
+// match "session has been running for a while" rather than any specific
+// drift model.
+// ----------------------------------------------------------------------------
+private const val CALIB_AMBER_THRESHOLD_MS = 30L * 60_000L
+private const val CALIB_RED_THRESHOLD_MS = 90L * 60_000L
+
+@Composable
+private fun CalibrationAgeChip(calibratedAtMs: Long) {
+    var nowMs by remember(calibratedAtMs) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(calibratedAtMs) {
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            delay(30_000)
+        }
+    }
+    val ageMs = (nowMs - calibratedAtMs).coerceAtLeast(0L)
+    val tone = when {
+        ageMs >= CALIB_RED_THRESHOLD_MS -> ChipTone.Danger
+        ageMs >= CALIB_AMBER_THRESHOLD_MS -> ChipTone.Warn
+        else -> ChipTone.On
+    }
+    Chip(text = "CAL ${formatCalibrationAgeCompact(ageMs)}", tone = tone)
 }
 
 // ----------------------------------------------------------------------------

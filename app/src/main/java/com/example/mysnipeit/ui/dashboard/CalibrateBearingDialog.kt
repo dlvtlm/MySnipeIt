@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.mysnipeit.ui.theme.*
+import kotlinx.coroutines.delay
 
 /**
  * Calibrate the tripod-forward world bearing. Operator centres the
@@ -33,6 +34,7 @@ import com.example.mysnipeit.ui.theme.*
 fun CalibrateBearingDialog(
     liveCompassDeg: Float?,
     currentCalibrationDeg: Double?,
+    currentCalibratedAtMs: Long?,
     onCapture: () -> Double?,
     onDismiss: () -> Unit,
 ) {
@@ -40,7 +42,22 @@ fun CalibrateBearingDialog(
     // Local state so the dialog shows the NEW value immediately after a
     // successful capture, without waiting for the StateFlow round-trip.
     var lastCaptured by remember { mutableStateOf<Double?>(null) }
+    var lastCapturedAtMs by remember { mutableStateOf<Long?>(null) }
     val displayCalibration = lastCaptured ?: currentCalibrationDeg
+    val displayCalibratedAtMs = lastCapturedAtMs ?: currentCalibratedAtMs
+
+    // 30 s ticker so the "X min ago" line counts up while the dialog is
+    // open. Keyed to the calibration timestamp so a fresh capture
+    // restarts the clock immediately.
+    var nowMs by remember(displayCalibratedAtMs) {
+        mutableStateOf(System.currentTimeMillis())
+    }
+    LaunchedEffect(displayCalibratedAtMs) {
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            delay(30_000)
+        }
+    }
 
     Dialog(
         onDismissRequest = onDismiss,
@@ -90,6 +107,16 @@ fun CalibrateBearingDialog(
                     modifier = Modifier.weight(1f),
                 )
             }
+            if (displayCalibratedAtMs != null) {
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    text = "Last calibrated: ${formatCalibrationAge(nowMs - displayCalibratedAtMs)}",
+                    color = t.inkDim,
+                    fontSize = 10.sp,
+                    letterSpacing = 0.14.em,
+                    fontFamily = JetBrainsMono,
+                )
+            }
             Spacer(Modifier.height(16.dp))
 
             if (liveCompassDeg == null) {
@@ -108,7 +135,13 @@ fun CalibrateBearingDialog(
                     label = "CAPTURE",
                     primary = true,
                     enabled = liveCompassDeg != null,
-                    onClick = { lastCaptured = onCapture() },
+                    onClick = {
+                        val captured = onCapture()
+                        if (captured != null) {
+                            lastCaptured = captured
+                            lastCapturedAtMs = System.currentTimeMillis()
+                        }
+                    },
                     modifier = Modifier.weight(1f),
                 )
                 CalBtn(
@@ -184,6 +217,38 @@ private fun CalBtn(
             letterSpacing = 0.18.em,
             fontFamily = JetBrainsMono,
         )
+    }
+}
+
+/**
+ * Human-readable calibration age for the dialog's "Last calibrated: X"
+ * line. Minute-grain (the underlying ticker updates every 30 s, so
+ * second-level precision would be misleading).
+ */
+internal fun formatCalibrationAge(ageMs: Long): String {
+    val min = ageMs.coerceAtLeast(0L) / 60_000L
+    val hr = min / 60L
+    val days = hr / 24L
+    return when {
+        min < 1 -> "just now"
+        min < 60 -> "$min min ago"
+        hr < 24 -> "$hr h ${min % 60} min ago"
+        else -> "$days d ago"
+    }
+}
+
+/**
+ * Compact form for the dashboard top-bar chip ("CAL 12m"). Same
+ * minute-grain as [formatCalibrationAge].
+ */
+internal fun formatCalibrationAgeCompact(ageMs: Long): String {
+    val min = ageMs.coerceAtLeast(0L) / 60_000L
+    val hr = min / 60L
+    return when {
+        min < 1 -> "<1m"
+        min < 60 -> "${min}m"
+        hr < 24 -> "${hr}h${(min % 60).toString().padStart(2, '0')}"
+        else -> "${hr / 24}d"
     }
 }
 

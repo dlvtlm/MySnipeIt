@@ -140,6 +140,7 @@ fun SniperApp(viewModel: SniperViewModel) {
     // frame acoustic-event bearings into true-north world bearings. Saved
     // via MENU → Calibrate Bearing.
     val tripodWorldBearingDeg by viewModel.tripodWorldBearingDeg.collectAsStateWithLifecycle()
+    val tripodCalibratedAtMs by viewModel.tripodCalibratedAtMs.collectAsStateWithLifecycle()
 
     // Diagnostics → MOCK MODE toggle. When ON the app streams synthetic
     // sensor data anchored to the operator's GPS so the ballistic
@@ -196,6 +197,7 @@ fun SniperApp(viewModel: SniperViewModel) {
                 // the alert (acceptAudioAlert already does that).
                 onAudioAlertAccept = { viewModel.acceptAudioAlert() },
                 onAudioAlertDismiss = { viewModel.dismissAudioAlert() },
+                tripodCalibratedAtMs = tripodCalibratedAtMs,
                 onTargetSelect = { targetId ->
                     if (targetId.isEmpty()) viewModel.deselectTarget()
                     else viewModel.selectTarget(targetId)
@@ -249,6 +251,7 @@ fun SniperApp(viewModel: SniperViewModel) {
                 CalibrateBearingDialog(
                     liveCompassDeg = latchedSensorData.compassHeadingDeg(),
                     currentCalibrationDeg = tripodWorldBearingDeg,
+                    currentCalibratedAtMs = tripodCalibratedAtMs,
                     onCapture = { viewModel.calibrateTripodWorldBearing() },
                     onDismiss = { showCalibrate = false },
                 )

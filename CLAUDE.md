@@ -23,7 +23,7 @@ Android tactical operator app that talks to a **Raspberry Pi 5** mounted on a re
 - **Maps:** `play-services-maps` + `maps-compose` 4.3.0, plus `play-services-location` (FusedLocationProvider). Google Maps API key injected via Secrets Gradle plugin as `${MAPS_API_KEY}` in the manifest — put it in `local.properties` as `MAPS_API_KEY=...`.
 - **Permissions runtime:** Accompanist Permissions 0.32.0. Location permission is requested manually in `MainActivity` (not via Accompanist there).
 - **JSON:** Gson 2.10.1 (kotlinx-serialization is in the catalog but not applied).
-- **Persistence:** `SharedPreferences` only ("snipeit" prefs: `dark_theme` boolean, `cartridge_id` + `rifle_id` strings for the ballistic loadout, `tripod_world_bearing_deg` float for the operator-calibrated mic-array world bearing offset). No Room, no DataStore.
+- **Persistence:** `SharedPreferences` only ("snipeit" prefs: `dark_theme` boolean, `cartridge_id` + `rifle_id` strings for the ballistic loadout, `tripod_world_bearing_deg` float + `tripod_calibrated_at_ms` long for the operator-calibrated mic-array world-bearing offset and its capture timestamp). No Room, no DataStore.
 
 ## Repo layout
 
@@ -95,6 +95,7 @@ Exposed from `SniperViewModel`:
 - `sensorHistory: StateFlow<List<SensorData>>` — rolling window of the last 10 raw frames (oldest first). Powers the Diagnostics LIVE SENSORS history strip.
 - `acousticEvent: StateFlow<AcousticEvent?>` — latest TDOA detection from the Pi's 4-mic module (separate WS message, not part of `ddl_frame`). Single-slot — dedupe/timeout/alert state is in `activeAudioAlert` below.
 - `tripodWorldBearingDeg: StateFlow<Double?>` — operator-calibrated world bearing of the tripod-forward direction (= mic 0° axis world bearing). Persisted in SharedPreferences. Set via dashboard MENU → Calibrate Bearing (`CalibrateBearingDialog`) when the operator centres the camera at servo 90° — the latched compass at that moment IS this value (since the compass is on the moving head). Null when uncalibrated; in that state no audio alerts fire (the world bearing is unknowable).
+- `tripodCalibratedAtMs: StateFlow<Long?>` — wall-clock timestamp of the most recent successful calibration. Drives the "Last calibrated: X ago" line in the dialog and the `CalibrationAgeChip` in the dashboard top bar (tone bands: < 30 min On, 30-90 min Warn, > 90 min Danger — purely a visual nudge, the calibration itself never expires).
 - `activeAudioAlert: StateFlow<AudioAlert?>` — derived alert state for the dashboard. Built from `acousticEvent` + `tripodWorldBearingDeg` + `uiState.selectedTargetId`. Applies the world-bearing transform (via `worldBearingFromAcousticEvent`), dedupes same-source events within ±15° (refreshing in place rather than replacing), auto-dismisses 20 s after the FIRST event of a dedupe group (`audioAlertTimeoutMs`, tunable), debounces re-fires for 30 s after explicit DISMISS, and flips the alert's `isInteractive` flag based on whether a target is selected (locked → passive chip, unlocked → full card). Setters: `acceptAudioAlert()` returns the bearing for the slew command; `dismissAudioAlert()` clears + arms the dismiss debounce.
 - `detectedTargets: StateFlow<List<DetectedTarget>>` — post-pacer/tracker output, NOT raw WS payload
 - `shootingSolution: StateFlow<ShootingSolution?>`
