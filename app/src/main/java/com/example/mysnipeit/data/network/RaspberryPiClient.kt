@@ -445,25 +445,41 @@ class RaspberryPiClient {
     }
 
     /**
-     * Send lock/unlock command via WebSocket
+     * Send a command to the Pi over the WebSocket. Envelope shape:
+     * `{type:"command", command, params, timestamp}` — the Pi's WS receive
+     * handler (websocket_server.c → ddl_bridge_handle_command) dispatches
+     * on the `command` field.
+     *
+     * WS rather than HTTP because the Pi has no HTTP server (port 8000
+     * isn't listening); the WS connection is already open and the Pi parses
+     * inbound command frames there. This is the single command channel for
+     * select_target (lock/unlock) and set_servo_angles (acoustic slew).
+     * Fire-and-forget: Java-WebSocket queues to its own writer thread, so
+     * this is safe to call from the main thread and returns immediately.
      */
-    fun sendLockCommand(targetId: String, action: String) {
+    fun sendWsCommand(command: String, params: Map<String, Any> = emptyMap()) {
         try {
-            val command = mapOf(
+            val msg = mapOf(
                 "type" to "command",
-                "command" to "select_target",
-                "params" to mapOf(
-                    "targetId" to targetId,
-                    "action" to action
-                ),
+                "command" to command,
+                "params" to params,
                 "timestamp" to System.currentTimeMillis()
             )
-            val jsonCommand = gson.toJson(command)
-            webSocketClient?.send(jsonCommand)
-            Log.d(TAG, "Sent $action command for target $targetId")
+            webSocketClient?.send(gson.toJson(msg))
+            Log.d(TAG, "Sent WS command: $command params=$params")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to send lock command: ${e.message}")
+            Log.e(TAG, "Failed to send WS command $command: ${e.message}")
         }
+    }
+
+    /**
+     * Send lock/unlock command via WebSocket.
+     */
+    fun sendLockCommand(targetId: String, action: String) {
+        sendWsCommand(
+            command = "select_target",
+            params = mapOf("targetId" to targetId, "action" to action),
+        )
     }
 
     /**

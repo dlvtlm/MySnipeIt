@@ -79,7 +79,8 @@ MySnipeIt/
 
 ```
 RPi5 ──WS:8555──► RaspberryPiClient ──StateFlow──► SniperRepository ──StateFlow──► SniperViewModel ──collectAsState──► Composables
-     ──HTTP:8000◄── (commands: calibrate, manual target, emergency_stop, select_target)
+     ◄──WS:8555── (commands: select_target lock/unlock, set_servo_angles slew — via sendWsCommand)
+     ──HTTP:8000◄── (calibrate, manual target, emergency_stop — Pi has no HTTP server yet, no-ops)
      ──RTSP:8554──► TacticalVideoPlayer (ExoPlayer RTSP)
 ```
 
@@ -115,8 +116,8 @@ No Nav Compose graph — `SniperApp` does a manual `when (uiState.currentScreen)
 `RaspberryPiClient` is where almost all integration complexity lives. Read this whole file before touching networking code. **It has a long JSDoc footer at the bottom showing exact JSON shapes — do not invent shapes.**
 
 ### Ports
-- **WebSocket:** `ws://<ip>:8555` — sensor data, target detections, shooting solutions, `stream_ready` events, system status
-- **HTTP commands:** `POST http://<ip>:8000/api/command` with `{command, params}`
+- **WebSocket:** `ws://<ip>:8555` — bidirectional. Inbound (Pi→app): sensor data, target detections, shooting solutions, `acoustic_event`, `stream_ready`, system status. Outbound (app→Pi): commands via `RaspberryPiClient.sendWsCommand()` with envelope `{type:"command", command, params, timestamp}`. The Pi parses these in its WS receive handler (`websocket_server.c` → `ddl_bridge_handle_command`) and dispatches to the servo event bus. Outbound commands: `select_target` (lock/unlock → servo LOCK / SCAN events) and `set_servo_angles` (acoustic slew → `ddl_servo_set_target` + NOISE_DETECTED event, which slews + resumes the autonomous scan).
+- **HTTP commands:** `POST http://<ip>:8000/api/command` with `{command, params}` — `RaspberryPiClient.sendCommand()`. **The Pi has NO HTTP server**, so these are currently no-ops (`calibrate_system`, `set_manual_target`, `emergency_stop` from `SniperRepository` go here and land nowhere). Kept for when/if the Pi adds an HTTP server; all commands that actually need to work go over the WS instead.
 - **RTSP video:** `rtsp://<ip>:8554/<stream_name>` (stream name comes from `stream_ready` event)
 
 ### Incoming WS message types (handled in `handleWebSocketMessage`)

@@ -144,7 +144,9 @@ class SniperRepository {
 
     // --- Acoustic-alert slew -----------------------------------------------
     // Branches on SLEW_COMMAND_MODE so the Pi-side dev's choice is a
-    // one-line change here.
+    // one-line change here. Both contracts go over the WebSocket (same
+    // channel as lock/unlock) — the Pi has no HTTP server, and it parses
+    // inbound command frames in its WS receive handler.
 
     /**
      * Ask the Pi to slew the camera toward an acoustic contact. Called
@@ -158,42 +160,42 @@ class SniperRepository {
      *    directly with [RigGeometry.MIC_TO_SERVO_OFFSET_DEG] — no
      *    compass involved, since the mic array and the servo are both
      *    bolted to the same fixed tripod (they share a frame, just
-     *    rotated by 90°). Robust against stale/missing compass.
+     *    rotated by 90°). Robust against stale/missing compass. The Pi
+     *    feeds these straight to ddl_servo_set_target + a NOISE_DETECTED
+     *    event, which slews the head and resumes the autonomous scan
+     *    from there.
      *  - [SlewCommandMode.SLEW_TO_BEARING] uses [worldBearingDeg], so
      *    the Pi can resolve servo angles using its own freshest compass
-     *    reading at the moment of slew.
+     *    reading at the moment of slew. (Not the active contract — the
+     *    Pi currently only implements set_servo_angles.)
      */
     fun slewToAcousticContact(rawMicAzimuthDeg: Double, worldBearingDeg: Double) {
-        scope.launch {
-            val ip = currentIpAddress ?: return@launch
-            when (SLEW_COMMAND_MODE) {
-                SlewCommandMode.SLEW_TO_BEARING -> {
-                    raspberryPiClient.sendCommand(
-                        ipAddress = ip,
-                        command = "slew_to_bearing",
-                        params = mapOf("azimuth_deg" to worldBearingDeg),
-                    )
-                }
-                SlewCommandMode.SET_SERVO_ANGLES -> {
-                    // Direct mic-frame → servo-frame conversion. No
-                    // compass, no world bearing, no detour: the two
-                    // frames are mechanically related by a single
-                    // constant offset (mic 0° ↔ servo 90°).
-                    val servoH = (rawMicAzimuthDeg + RigGeometry.MIC_TO_SERVO_OFFSET_DEG)
-                        .coerceIn(0.0, 180.0)
-                    // Mic-only contact has no elevation info — default
-                    // to level (servo center vertical). Pi-side
-                    // autonomous scan can sweep up/down from there.
-                    val servoV = RigGeometry.SERVO_VERTICAL_LEVEL_DEG
-                    raspberryPiClient.sendCommand(
-                        ipAddress = ip,
-                        command = "set_servo_angles",
-                        params = mapOf(
-                            "horizontal_deg" to servoH,
-                            "vertical_deg" to servoV,
-                        ),
-                    )
-                }
+        when (SLEW_COMMAND_MODE) {
+            SlewCommandMode.SLEW_TO_BEARING -> {
+                raspberryPiClient.sendWsCommand(
+                    command = "slew_to_bearing",
+                    params = mapOf("azimuth_deg" to worldBearingDeg),
+                )
+            }
+            SlewCommandMode.SET_SERVO_ANGLES -> {
+                // Direct mic-frame → servo-frame conversion. No compass,
+                // no world bearing, no detour: the two frames are
+                // mechanically related by a single constant offset
+                // (mic 0° ↔ servo 90°). Clamp to the servo's mechanical
+                // pan range (the Pi clamps again defensively).
+                val servoH = (rawMicAzimuthDeg + RigGeometry.MIC_TO_SERVO_OFFSET_DEG)
+                    .coerceIn(0.0, 180.0)
+                // Mic-only contact has no elevation info — default to
+                // level (servo center vertical). Pi-side autonomous scan
+                // can sweep up/down from there.
+                val servoV = RigGeometry.SERVO_VERTICAL_LEVEL_DEG
+                raspberryPiClient.sendWsCommand(
+                    command = "set_servo_angles",
+                    params = mapOf(
+                        "horizontal_deg" to servoH,
+                        "vertical_deg" to servoV,
+                    ),
+                )
             }
         }
     }
