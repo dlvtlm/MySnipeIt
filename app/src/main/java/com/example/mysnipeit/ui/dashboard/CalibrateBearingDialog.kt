@@ -35,6 +35,7 @@ fun CalibrateBearingDialog(
     liveCompassDeg: Float?,
     currentCalibrationDeg: Double?,
     currentCalibratedAtMs: Long?,
+    calibrationTimeoutMs: Long,
     onCapture: () -> Double?,
     onDismiss: () -> Unit,
 ) {
@@ -109,9 +110,12 @@ fun CalibrateBearingDialog(
             }
             if (displayCalibratedAtMs != null) {
                 Spacer(Modifier.height(6.dp))
+                val ageMs = nowMs - displayCalibratedAtMs
+                val expired = ageMs >= calibrationTimeoutMs
                 Text(
-                    text = "Last calibrated: ${formatCalibrationAge(nowMs - displayCalibratedAtMs)}",
-                    color = t.inkDim,
+                    text = "Last calibrated: ${formatCalibrationAge(ageMs)}" +
+                        if (expired) " · EXPIRED — alerts show relative angle" else "",
+                    color = if (expired) t.danger else t.inkDim,
                     fontSize = 10.sp,
                     letterSpacing = 0.14.em,
                     fontFamily = JetBrainsMono,

@@ -64,6 +64,7 @@ fun DashboardScreen(
     onAudioAlertAccept: () -> Unit,
     onAudioAlertDismiss: () -> Unit,
     tripodCalibratedAtMs: Long?,
+    tripodCalibrationTimeoutMs: Long,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onTargetSelect: (String) -> Unit = {},
@@ -109,7 +110,7 @@ fun DashboardScreen(
             // operator gets a visual nudge to recalibrate after long
             // sessions. The calibration itself NEVER expires — this is
             // purely a hint.
-            tripodCalibratedAtMs?.let { CalibrationAgeChip(it) }
+            tripodCalibratedAtMs?.let { CalibrationAgeChip(it, tripodCalibrationTimeoutMs) }
 
             // Menu (kept; opens the Diagnostics shortcut dialog from MainActivity)
             TopBarIconButton(label = "MENU", onClick = onMenuClick)
@@ -194,20 +195,20 @@ fun DashboardScreen(
 // ----------------------------------------------------------------------------
 // World-bearing calibration age chip
 //
-// Tone bands:
-//   < 30 min   On     (fresh)
-//   30-90 min  Warn   (consider recalibrating)
-//   > 90 min   Danger (probably stale; recalibrate)
+// Tone bands (timeoutMs = SniperViewModel.tripodCalibrationTimeoutMs):
+//   < 30 min        On     (fresh)
+//   30 min-timeout  Warn   (consider recalibrating)
+//   >= timeout      Danger + "CAL EXP" — the calibration has EXPIRED;
+//                   acoustic alerts now show the relative mic angle until
+//                   the operator recalibrates.
 //
-// Bands are POC defaults — operator can recalibrate at any time. They
-// match "session has been running for a while" rather than any specific
-// drift model.
+// The amber band is a POC default; the red/expiry point is the actual
+// functional timeout passed in from the ViewModel.
 // ----------------------------------------------------------------------------
 private const val CALIB_AMBER_THRESHOLD_MS = 30L * 60_000L
-private const val CALIB_RED_THRESHOLD_MS = 90L * 60_000L
 
 @Composable
-private fun CalibrationAgeChip(calibratedAtMs: Long) {
+private fun CalibrationAgeChip(calibratedAtMs: Long, timeoutMs: Long) {
     var nowMs by remember(calibratedAtMs) { mutableStateOf(System.currentTimeMillis()) }
     LaunchedEffect(calibratedAtMs) {
         while (true) {
@@ -216,12 +217,16 @@ private fun CalibrationAgeChip(calibratedAtMs: Long) {
         }
     }
     val ageMs = (nowMs - calibratedAtMs).coerceAtLeast(0L)
+    val expired = ageMs >= timeoutMs
     val tone = when {
-        ageMs >= CALIB_RED_THRESHOLD_MS -> ChipTone.Danger
+        expired -> ChipTone.Danger
         ageMs >= CALIB_AMBER_THRESHOLD_MS -> ChipTone.Warn
         else -> ChipTone.On
     }
-    Chip(text = "CAL ${formatCalibrationAgeCompact(ageMs)}", tone = tone)
+    Chip(
+        text = if (expired) "CAL EXP" else "CAL ${formatCalibrationAgeCompact(ageMs)}",
+        tone = tone,
+    )
 }
 
 // ----------------------------------------------------------------------------

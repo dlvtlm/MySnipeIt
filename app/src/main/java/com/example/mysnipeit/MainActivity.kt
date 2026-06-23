@@ -198,6 +198,7 @@ fun SniperApp(viewModel: SniperViewModel) {
                 onAudioAlertAccept = { viewModel.acceptAudioAlert() },
                 onAudioAlertDismiss = { viewModel.dismissAudioAlert() },
                 tripodCalibratedAtMs = tripodCalibratedAtMs,
+                tripodCalibrationTimeoutMs = viewModel.tripodCalibrationTimeoutMs,
                 onTargetSelect = { targetId ->
                     if (targetId.isEmpty()) viewModel.deselectTarget()
                     else viewModel.selectTarget(targetId)
@@ -252,6 +253,7 @@ fun SniperApp(viewModel: SniperViewModel) {
                     liveCompassDeg = latchedSensorData.compassHeadingDeg(),
                     currentCalibrationDeg = tripodWorldBearingDeg,
                     currentCalibratedAtMs = tripodCalibratedAtMs,
+                    calibrationTimeoutMs = viewModel.tripodCalibrationTimeoutMs,
                     onCapture = { viewModel.calibrateTripodWorldBearing() },
                     onDismiss = { showCalibrate = false },
                 )

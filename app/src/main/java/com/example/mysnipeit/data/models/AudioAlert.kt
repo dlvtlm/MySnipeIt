@@ -8,6 +8,13 @@ package com.example.mysnipeit.data.models
  *  - [bearingDeg] is the WORLD-relative true-north bearing (0-360),
  *    fixed at the moment of detection. Subsequent rig rotation doesn't
  *    move it — the sound source is still where it was in the world.
+ *    Only meaningful when [isWorldBearing] is true.
+ *  - [isWorldBearing] true when the system was calibrated (and the
+ *    calibration hadn't expired) at detection time, so [bearingDeg] is
+ *    a real true-north bearing. False when uncalibrated/expired — the
+ *    UI then shows [rawAzimuthDeg] as a RELATIVE angle (mic-frame,
+ *    "left/right of tripod-forward") instead. The SLEW action works in
+ *    either case because it only needs [rawAzimuthDeg].
  *  - [firstSeenAtMs] is the timestamp the alert first appeared. The
  *    20 s auto-dismiss timer counts from here, NOT from the last merge:
  *    a continuously-firing source still clears itself eventually so the
@@ -24,6 +31,7 @@ package com.example.mysnipeit.data.models
 data class AudioAlert(
     val bearingDeg: Double,
     val rawAzimuthDeg: Double,
+    val isWorldBearing: Boolean,
     val confidence: Float,
     val peakAmplitude: Float,
     val durationMs: Float,

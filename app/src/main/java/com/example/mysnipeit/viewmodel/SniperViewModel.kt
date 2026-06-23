@@ -101,6 +101,30 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     val tripodCalibratedAtMs: StateFlow<Long?> = _tripodCalibratedAtMs.asStateFlow()
 
     /**
+     * How long a calibration stays valid before it's treated as expired.
+     * Past this age the saved world bearing is no longer trusted (the
+     * operator has probably moved the tripod, or it's just gone stale),
+     * so acoustic alerts fall back to showing the RELATIVE mic angle
+     * instead of a world bearing. The saved value isn't wiped — it stays
+     * for reference in the calibrate dialog — its USE is just gated.
+     *
+     * CHANGE THIS to tune the expiry window. Matches the dashboard
+     * CalibrationAgeChip's red band, so "chip turns red" == "expired".
+     */
+    val tripodCalibrationTimeoutMs: Long = 90L * 60_000L
+
+    /** True when a calibration exists AND hasn't aged past the timeout. */
+    fun isCalibrationValid(nowMs: Long = System.currentTimeMillis()): Boolean {
+        val at = _tripodCalibratedAtMs.value ?: return false
+        return (nowMs - at) < tripodCalibrationTimeoutMs
+    }
+
+    /** The world bearing to USE right now: the saved value if the
+     *  calibration is still valid, else null (expired or never set). */
+    private fun effectiveTripodWorldBearingDeg(nowMs: Long): Double? =
+        if (isCalibrationValid(nowMs)) _tripodWorldBearingDeg.value else null
+
+    /**
      * Capture the current (latched) compass heading and save it as the
      * tripod-forward world bearing. Caller is responsible for having the
      * camera centred at servo 90° / pointing at tripod-forward; the
@@ -465,6 +489,8 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
      */
     val activeAudioAlert: StateFlow<AudioAlert?> = _activeAudioAlert.asStateFlow()
 
+    // Raw mic azimuth of the last explicitly-dismissed source (the dedupe
+    // key), used to suppress re-fires for dismissDebounceMs.
     private var lastDismissedBearing: Double? = null
     private var lastDismissedAtMs: Long = 0L
 
@@ -488,23 +514,30 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     }
 
     private fun applyAcousticEvent(event: AcousticEvent?) {
-        // worldBearingFromAcousticEvent does the valid-flag + uncalibrated
-        // checks for us; the result is non-null only when the operator has
-        // calibrated the tripod world bearing AND the event itself is
-        // valid. If the operator hasn't calibrated yet, no alert fires —
-        // the bearing would be unknowable and showing a card without one
-        // would be misleading. The Diagnostics LIVE SENSORS pane still
-        // surfaces the raw event so the operator knows events ARE arriving
-        // and can go calibrate via MENU → Calibrate Bearing.
-        val bearing = worldBearingFromAcousticEvent(event, _tripodWorldBearingDeg.value)
-            ?: return
+        // Need a VALID event to do anything; an invalid TDOA solve isn't
+        // actionable. (The Diagnostics LIVE SENSORS pane still shows the
+        // raw event regardless, so the operator sees events are arriving.)
+        if (event == null || !event.valid) return
         val now = System.currentTimeMillis()
 
-        // Suppress if the operator just dismissed a same-source event.
+        // World bearing only when the calibration is present AND unexpired.
+        // Otherwise the alert still fires (Option B) but shows the RELATIVE
+        // mic angle — the SLEW action works either way since it only needs
+        // the raw azimuth (mic_azim + 90 → servo).
+        val worldBearing = worldBearingFromAcousticEvent(event, effectiveTripodWorldBearingDeg(now))
+        val isWorld = worldBearing != null
+        val rawAzimuth = event.azimuthDeg.toDouble()
+        // Value shown on the card: world bearing when calibrated, else the
+        // raw relative angle.
+        val displayBearing = worldBearing ?: rawAzimuth
+
+        // De-dupe / debounce on the RAW mic azimuth — it's always present
+        // (calibrated or not) and two events from the same physical source
+        // have a similar raw angle regardless of calibration state.
         val dismissed = lastDismissedBearing
         if (dismissed != null &&
             now - lastDismissedAtMs < dismissDebounceMs &&
-            angularDistance(dismissed, bearing) <= audioAlertDedupeWindowDeg
+            angularDistance(dismissed, rawAzimuth) <= audioAlertDedupeWindowDeg
         ) {
             return
         }
@@ -512,14 +545,17 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
         val interactive = _uiState.value.selectedTargetId.isNullOrEmpty()
         val current = _activeAudioAlert.value
         val isSameSource = current != null &&
-            angularDistance(current.bearingDeg, bearing) <= audioAlertDedupeWindowDeg
+            angularDistance(current.rawAzimuthDeg, rawAzimuth) <= audioAlertDedupeWindowDeg
 
         _activeAudioAlert.value = if (isSameSource && current != null) {
             // Dedupe-then-replace: refresh confidence/amplitude/duration and
             // bump lastUpdated, but keep firstSeenAtMs so the timeout still
-            // counts from the ORIGINAL detection.
+            // counts from the ORIGINAL detection. Re-evaluate the bearing too
+            // so a calibration done WHILE an alert is up upgrades it to world.
             current.copy(
-                rawAzimuthDeg = event!!.azimuthDeg.toDouble(),
+                bearingDeg = displayBearing,
+                rawAzimuthDeg = rawAzimuth,
+                isWorldBearing = isWorld,
                 confidence = event.confidence,
                 peakAmplitude = event.peakAmplitude,
                 durationMs = event.durationMs,
@@ -528,8 +564,9 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
             )
         } else {
             AudioAlert(
-                bearingDeg = bearing,
-                rawAzimuthDeg = event!!.azimuthDeg.toDouble(),
+                bearingDeg = displayBearing,
+                rawAzimuthDeg = rawAzimuth,
+                isWorldBearing = isWorld,
                 confidence = event.confidence,
                 peakAmplitude = event.peakAmplitude,
                 durationMs = event.durationMs,
@@ -592,12 +629,13 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
         return current.bearingDeg
     }
 
-    /** Operator dismissed the alert. Clears it and remembers the bearing
-     *  so same-source events within dismissDebounceMs don't immediately
-     *  re-alert. */
+    /** Operator dismissed the alert. Clears it and remembers the source's
+     *  RAW azimuth so same-source events within dismissDebounceMs don't
+     *  immediately re-alert (raw azimuth is the dedupe key — see
+     *  applyAcousticEvent). */
     fun dismissAudioAlert() {
         val current = _activeAudioAlert.value ?: return
-        lastDismissedBearing = current.bearingDeg
+        lastDismissedBearing = current.rawAzimuthDeg
         lastDismissedAtMs = System.currentTimeMillis()
         _activeAudioAlert.value = null
     }

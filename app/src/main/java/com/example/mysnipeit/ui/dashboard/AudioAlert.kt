@@ -77,6 +77,12 @@ fun AudioAlertOverlay(
     }
 }
 
+/** Direction text for an alert: true-north world bearing when calibrated
+ *  ("215°"), else the relative mic-frame angle ("REL -45°"). */
+private fun bearingText(alert: AudioAlert): String =
+    if (alert.isWorldBearing) "${alert.bearingDeg.toInt()}°"
+    else "REL ${alert.rawAzimuthDeg.toInt()}°"
+
 // ----------------------------------------------------------------------------
 // Full interactive card (no target locked → operator can act on the contact)
 // ----------------------------------------------------------------------------
@@ -121,15 +127,25 @@ private fun AudioAlertCard(
         }
         // Body
         Column(modifier = Modifier.padding(16.dp)) {
-            Lbl(text = "BEARING")
+            Lbl(text = if (alert.isWorldBearing) "BEARING" else "BEARING · RELATIVE")
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "${alert.bearingDeg.toInt()}°",
+                text = bearingText(alert),
                 color = t.ink,
                 fontSize = 28.sp,
                 letterSpacing = 0.04.em,
                 fontFamily = JetBrainsMono,
             )
+            if (!alert.isWorldBearing) {
+                Spacer(Modifier.height(2.dp))
+                Text(
+                    text = "uncalibrated — MENU ▸ Calibrate Bearing",
+                    color = t.inkMute,
+                    fontSize = 9.sp,
+                    letterSpacing = 0.1.em,
+                    fontFamily = JetBrainsMono,
+                )
+            }
             Spacer(Modifier.height(12.dp))
             DiagRow(label = "Confidence", value = "${(alert.confidence * 100).toInt()}%")
             DiagRow(label = "Amplitude", value = String.format("%.2f", alert.peakAmplitude))
@@ -243,10 +259,10 @@ private fun AudioAlertSlewingCard(
             )
         }
         Column(modifier = Modifier.padding(16.dp)) {
-            Lbl(text = "BEARING")
+            Lbl(text = if (alert.isWorldBearing) "BEARING" else "BEARING · RELATIVE")
             Spacer(Modifier.height(4.dp))
             Text(
-                text = "${alert.bearingDeg.toInt()}°",
+                text = bearingText(alert),
                 color = t.ink,
                 fontSize = 28.sp,
                 letterSpacing = 0.04.em,
@@ -289,14 +305,14 @@ private fun AudioAlertChip(
             fontFamily = JetBrainsMono,
         )
         Text(
-            text = "CONTACT",
+            text = if (alert.isWorldBearing) "CONTACT" else "CONTACT REL",
             color = t.accent,
             fontSize = 10.sp,
             letterSpacing = 0.2.em,
             fontFamily = JetBrainsMono,
         )
         Text(
-            text = "${alert.bearingDeg.toInt()}°",
+            text = bearingText(alert),
             color = t.ink,
             fontSize = 13.sp,
             letterSpacing = 0.06.em,
