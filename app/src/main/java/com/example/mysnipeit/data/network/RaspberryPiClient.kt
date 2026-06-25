@@ -80,6 +80,12 @@ class RaspberryPiClient {
     private val _shootingSolution = MutableStateFlow<ShootingSolution?>(null)
     val shootingSolution: StateFlow<ShootingSolution?> = _shootingSolution.asStateFlow()
 
+    // Latest acoustic event from the Pi's 4-mic TDOA module. Single-slot
+    // flow — the alert state machine (added in a later step) handles
+    // de-dupe and timeout; the parser just publishes the raw event.
+    private val _acousticEvent = MutableStateFlow<AcousticEvent?>(null)
+    val acousticEvent: StateFlow<AcousticEvent?> = _acousticEvent.asStateFlow()
+
     // System status - FIXED to match your model exactly
     private val _systemStatus = MutableStateFlow(
         SystemStatus(
@@ -99,6 +105,10 @@ class RaspberryPiClient {
 
     // Mock data generator
     private var mockDataJob: Job? = null
+    // Synthetic acoustic-event generator, ticks on its own schedule
+    // (every 20-40 s, not every 1.5 s like the sensor frames) so the
+    // alert UI can be exercised end-to-end without a Pi.
+    private var mockAcousticJob: Job? = null
 
     // --- Forced mock anchor -------------------------------------------------
     // When force-mock mode is enabled from the Diagnostics screen, the mock
@@ -136,8 +146,11 @@ class RaspberryPiClient {
         Log.d(TAG, "Forced mock mode DISABLED")
         mockDataJob?.cancel()
         mockDataJob = null
+        mockAcousticJob?.cancel()
+        mockAcousticJob = null
         _sensorData.value = null
         _detectedTargets.value = emptyList()
+        _acousticEvent.value = null
         updateSystemStatus(ConnectionState.DISCONNECTED)
     }
 
@@ -351,6 +364,15 @@ class RaspberryPiClient {
                     val status = gson.fromJson(message, SystemStatus::class.java)
                     _systemStatus.value = status
                 }
+                "acoustic_event" -> {
+                    // Single TDOA detection from the Pi's mic array. The
+                    // dedupe + timeout logic lives in SniperViewModel; here
+                    // we just publish the raw event.
+                    val event = gson.fromJson(message, AcousticEvent::class.java)
+                    _acousticEvent.value = event
+                    Log.d(TAG, "Acoustic event azim=${event.azimuthDeg} " +
+                        "conf=${event.confidence} valid=${event.valid}")
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Failed to parse message: ${e.message}", e)
@@ -423,25 +445,41 @@ class RaspberryPiClient {
     }
 
     /**
-     * Send lock/unlock command via WebSocket
+     * Send a command to the Pi over the WebSocket. Envelope shape:
+     * `{type:"command", command, params, timestamp}` — the Pi's WS receive
+     * handler (websocket_server.c → ddl_bridge_handle_command) dispatches
+     * on the `command` field.
+     *
+     * WS rather than HTTP because the Pi has no HTTP server (port 8000
+     * isn't listening); the WS connection is already open and the Pi parses
+     * inbound command frames there. This is the single command channel for
+     * select_target (lock/unlock) and set_servo_angles (acoustic slew).
+     * Fire-and-forget: Java-WebSocket queues to its own writer thread, so
+     * this is safe to call from the main thread and returns immediately.
      */
-    fun sendLockCommand(targetId: String, action: String) {
+    fun sendWsCommand(command: String, params: Map<String, Any> = emptyMap()) {
         try {
-            val command = mapOf(
+            val msg = mapOf(
                 "type" to "command",
-                "command" to "select_target",
-                "params" to mapOf(
-                    "targetId" to targetId,
-                    "action" to action
-                ),
+                "command" to command,
+                "params" to params,
                 "timestamp" to System.currentTimeMillis()
             )
-            val jsonCommand = gson.toJson(command)
-            webSocketClient?.send(jsonCommand)
-            Log.d(TAG, "Sent $action command for target $targetId")
+            webSocketClient?.send(gson.toJson(msg))
+            Log.d(TAG, "Sent WS command: $command params=$params")
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to send lock command: ${e.message}")
+            Log.e(TAG, "Failed to send WS command $command: ${e.message}")
         }
+    }
+
+    /**
+     * Send lock/unlock command via WebSocket.
+     */
+    fun sendLockCommand(targetId: String, action: String) {
+        sendWsCommand(
+            command = "select_target",
+            params = mapOf("targetId" to targetId, "action" to action),
+        )
     }
 
     /**
@@ -449,6 +487,7 @@ class RaspberryPiClient {
      */
     private fun startMockDataGeneration() {
         Log.d(TAG, " Starting mock data generation")
+        startMockAcousticGeneration()
 
         mockDataJob?.cancel()
         mockDataJob = scope.launch {
@@ -535,7 +574,7 @@ class RaspberryPiClient {
                     ),
                     DetectedTarget(
                         id = "T2",
-                        targetType = "VEHICLE",
+                        targetType = "DRONE",
                         confidence = 0.72f,
                         bbox = BoundingBox(
                             x = 1344,     // ~70% of 1920
@@ -582,6 +621,41 @@ class RaspberryPiClient {
         }
     }
 
+    /**
+     * Synthetic acoustic-event generator. Fires a single `valid=true`
+     * AcousticEvent at a random azimuth on a 20-40 s random interval so
+     * the dashboard's alert UI (dedupe, timeout, accept/dismiss, lock
+     * downgrade) can be exercised offline.
+     *
+     * Runs alongside [startMockDataGeneration]'s sensor/target loop;
+     * lifetime is tied to it via [stopForcedMock] and [disconnect].
+     */
+    private fun startMockAcousticGeneration() {
+        mockAcousticJob?.cancel()
+        mockAcousticJob = scope.launch {
+            // First event waits a few seconds so the operator can see
+            // the dashboard settle before the alert pops.
+            delay(5_000)
+            while (isActive) {
+                _acousticEvent.value = AcousticEvent(
+                    type = "acoustic_event",
+                    timestampUs = System.nanoTime() / 1000L,
+                    azimuthDeg = Math.random().toFloat() * 360f,
+                    confidence = 0.6f + Math.random().toFloat() * 0.4f,
+                    peakAmplitude = 0.5f + Math.random().toFloat() * 0.5f,
+                    durationMs = 1f + Math.random().toFloat() * 5f,
+                    valid = true,
+                )
+                Log.d(TAG, "Mock acoustic event emitted (azim=${_acousticEvent.value?.azimuthDeg})")
+                // Random gap. 20-40s is wide enough that the operator
+                // can see the alert auto-dismiss (20s) and the post-
+                // dismiss debounce (30s) without events stepping on
+                // each other.
+                delay(20_000L + (Math.random() * 20_000L).toLong())
+            }
+        }
+    }
+
     fun disconnect() {
         Log.d(TAG, "🔌 Disconnecting from RPi")
 
@@ -592,6 +666,8 @@ class RaspberryPiClient {
 
         mockDataJob?.cancel()
         mockDataJob = null
+        mockAcousticJob?.cancel()
+        mockAcousticJob = null
 
         // Drain any pending detections from the pacer queue and reset
         // staleness tracking so the next connection starts fresh.
@@ -609,6 +685,7 @@ class RaspberryPiClient {
         _sensorData.value = null
         _detectedTargets.value = emptyList()
         _shootingSolution.value = null
+        _acousticEvent.value = null
     }
 
     fun isConnected(): Boolean {

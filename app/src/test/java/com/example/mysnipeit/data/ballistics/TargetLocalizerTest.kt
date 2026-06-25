@@ -8,10 +8,12 @@ import org.junit.Test
 import kotlin.math.abs
 
 /**
- * Pure-math tests for [localizeTarget]. All scenarios assume the current
- * [RigGeometry] defaults (compass on fixed base, servo centers at 90°);
- * if a field test flips those constants, update the servo inputs here to
- * keep the geometric intent of each case.
+ * Pure-math tests for [localizeTarget]. Scenarios are written against
+ * the actual rig mounting: [RigGeometry.COMPASS_ON_FIXED_BASE] is
+ * `false` — the compass is bolted to the moving camera arm, so its
+ * reading IS the camera's world-frame pointing direction and the servo
+ * pan offset is NOT added to the bearing. The vertical servo angle
+ * still governs the slant→horizontal split.
  *
  * Reference: 1° latitude ≈ 111.19 km at the equator-radius approximation
  * used by the localizer, so 1112 m north ≈ 0.01° lat.
@@ -63,24 +65,31 @@ class TargetLocalizerTest {
     }
 
     @Test
-    fun `servo pan offset adds to heading when compass is base-mounted`() {
-        // Heading 0 + pan 135 (= +45 from the 90 center) → bearing 45 (NE).
-        val t = localize(heading = 0f, servoH = 135f)!!
-        // Both components ≈ 1000/√2 = 707.1m → dLat ≈ +0.006359°
-        assertEquals(31.506359, t.latitudeDeg, 1e-4)
-        // dLon ≈ 0.006359 / cos(31.5°) ≈ 0.007457
-        assertEquals(34.507457, t.longitudeDeg, 1e-4)
+    fun `compass heading IS the bearing in moving-head config`() {
+        // With the compass on the moving head, the heading directly tells
+        // us where the camera is pointing — servo pan is NOT added on top.
+        // Heading 45 → NE quadrant, regardless of any servo H value.
+        val t1 = localize(heading = 45f, servoH = 90f)!!
+        val t2 = localize(heading = 45f, servoH = 135f)!!
+        // Same target either way (servoH ignored for bearing).
+        assertEquals(t1.latitudeDeg, t2.latitudeDeg, 1e-6)
+        assertEquals(t1.longitudeDeg, t2.longitudeDeg, 1e-6)
+        // NE: both lat and lon increase.
+        assert(t1.latitudeDeg > piGps.latitudeDeg)
+        assert(t1.longitudeDeg > piGps.longitudeDeg)
+        // Components ≈ 1000/√2 = 707.1m → dLat ≈ +0.006359°
+        assertEquals(31.506359, t1.latitudeDeg, 1e-4)
+        assertEquals(34.507457, t1.longitudeDeg, 1e-4)
     }
 
     @Test
-    fun `bearing wraps past 360`() {
-        // Heading 350 + pan +45 → 395 → wraps to 35. Must not throw or
-        // produce a negative-bearing projection.
-        val t = localize(heading = 350f, servoH = 135f)
+    fun `heading near 360 produces north-ish bearing`() {
+        // Heading 350 → 10° west of north. Both components should be
+        // close to "all latitude" (lat increases) with a tiny lon dip.
+        val t = localize(heading = 350f)
         assertNotNull(t)
-        // NE-ish quadrant: both lat and lon must increase
         assert(t!!.latitudeDeg > piGps.latitudeDeg)
-        assert(t.longitudeDeg > piGps.longitudeDeg)
+        assert(t.longitudeDeg < piGps.longitudeDeg)  // 10° west of N
     }
 
     @Test
@@ -114,12 +123,17 @@ class TargetLocalizerTest {
     }
 
     @Test
-    fun `null when servo pan missing in base-mounted config`() {
-        assertNull(localize(heading = 0f, servoH = null))
+    fun `servo pan NOT required in moving-head config`() {
+        // With COMPASS_ON_FIXED_BASE = false, the localizer doesn't read
+        // the servo pan angle at all (it's not part of the bearing math).
+        // A null servoH must not block the computation.
+        assertNotNull(localize(heading = 0f, servoH = null))
     }
 
     @Test
     fun `null when servo tilt missing`() {
+        // Servo vertical IS still required — it governs the slant→
+        // horizontal split that determines target altitude.
         assertNull(localize(heading = 0f, servoV = null))
     }
 
@@ -144,9 +158,9 @@ class TargetLocalizerTest {
 
     @Test
     fun `distance from pi to localized target matches horizontal range`() {
+        // servoH is ignored in moving-head config; left at 105 just to
+        // confirm it doesn't affect the result. servoV 100 → 10° tilt up.
         val t = localize(heading = 37f, servoH = 105f, servoV = 100f, distance = 800f)!!
-        // Recompute ground distance with the same projection the localizer
-        // uses; must equal slant·cos(10°) within a meter.
         val dLatM = Math.toRadians(t.latitudeDeg - piGps.latitudeDeg) * 6_371_000.0
         val dLonM = Math.toRadians(t.longitudeDeg - piGps.longitudeDeg) *
                 6_371_000.0 * Math.cos(Math.toRadians(piGps.latitudeDeg))

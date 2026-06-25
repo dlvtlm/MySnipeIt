@@ -275,9 +275,9 @@ fun MockVideoFeed(
             val hasLockedTargets = lockedTargets.isNotEmpty()
             Text(
                 text = if (hasLockedTargets) {
-                    "🎯 TRACKING (${lockedTargets.size} locked)"
+                    " TRACKING (${lockedTargets.size} locked)"
                 } else {
-                    "🔍 SCANNING"
+                    " SCANNING"
                 },
                 color = if (hasLockedTargets) Color(0xFFFF6B35) else Color(0xFF038C16),
                 fontSize = 12.sp,

@@ -21,6 +21,7 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.example.mysnipeit.data.models.AcousticEvent
 import com.example.mysnipeit.data.models.SensorData
 import com.example.mysnipeit.data.network.NetworkTester
 import com.example.mysnipeit.ui.theme.*
@@ -51,6 +52,7 @@ fun DiagnosticsScreen(
     onBackClick: () -> Unit,
     sensorData: SensorData?,
     sensorHistory: List<SensorData>,
+    acousticEvent: AcousticEvent?,
     forceMockMode: Boolean,
     onForceMockModeChange: (Boolean) -> Unit,
     isDarkTheme: Boolean = true,
@@ -88,6 +90,7 @@ fun DiagnosticsScreen(
                 DiagSection.LIVE_SENSORS -> LiveSensorsPane(
                     sensorData = sensorData,
                     history = sensorHistory,
+                    acousticEvent = acousticEvent,
                 )
                 DiagSection.MOCK_MODE -> MockModePane(
                     enabled = forceMockMode,
@@ -273,6 +276,7 @@ private fun DiagMainPane(
 private fun LiveSensorsPane(
     sensorData: SensorData?,
     history: List<SensorData>,
+    acousticEvent: AcousticEvent?,
 ) {
     val t = LocalTactical.current
     val ddl = sensorData?.ddlFrame
@@ -388,6 +392,25 @@ private fun LiveSensorsPane(
                     "speed_mps       = %.2f".format(it.speedMps),
                     "direction_valid = ${it.directionValid}",
                     "direction_deg   = %.2f".format(it.directionDeg),
+                )
+            },
+        )
+        // Acoustic events are a SEPARATE WS message type (not part of
+        // ddl_frame), so they live in their own sub-frame card here.
+        // Shows the most recent event the Pi has sent — there's no
+        // "current frame" semantic, so the chip just reflects the event's
+        // own valid flag.
+        Spacer(Modifier.height(12.dp))
+        SubFrameCard(
+            title = "ACOUSTIC EVENT (latest)",
+            valid = acousticEvent?.valid,
+            lines = acousticEvent?.let {
+                listOf(
+                    "timestamp_us   = ${it.timestampUs}",
+                    "azimuth_deg    = %.2f (mic-array frame)".format(it.azimuthDeg),
+                    "confidence     = %.2f".format(it.confidence),
+                    "peak_amplitude = %.2f".format(it.peakAmplitude),
+                    "duration_ms    = %.2f".format(it.durationMs),
                 )
             },
         )
@@ -613,6 +636,7 @@ private fun MockModePane(
                 "Wind    — 0–8 m/s, random direction (both channels VALID)",
                 "Atmos.  — 20–30 °C, 50–70 % RH",
                 "Targets — 2 mock detections (T1 HUMAN, T2 VEHICLE) over a mock video",
+                "Audio   — synthetic acoustic_event every 20-40 s at random azimuth, drives the alert card",
             ).forEach { line ->
                 Text(
                     text = "•  $line",

@@ -22,10 +22,10 @@ data class TargetLocation(
 )
 
 /**
- * Rig-geometry assumptions — UNVERIFIED against the physical rig (the
- * mounting details weren't known at the time of writing). Each constant is
- * independently correctable after one field test; nothing else in the code
- * depends on the actual values.
+ * Rig-geometry constants. Each value reflects the physical rig per the
+ * Pi-side team's mechanical design. Constants are independently
+ * correctable after a field test if anything turns out misaligned;
+ * nothing else in the code depends on the actual values.
  */
 object RigGeometry {
     /**
@@ -34,8 +34,14 @@ object RigGeometry {
      *    the camera's bearing = compass heading + (servo pan − center).
      *  - false = on the MOVING HEAD: the compass already points where the
      *    camera looks, so the servo pan angle is ignored for bearing.
+     *
+     * **`false` for the actual rig** — per Pi-side spec, the compass
+     * board is bolted to the camera arm (moving head), not the fixed
+     * tripod base. So the compass reading directly gives the camera's
+     * world-frame pointing direction at any moment; the rangefinder
+     * shares that direction since it sits next to the camera.
      */
-    const val COMPASS_ON_FIXED_BASE = true
+    const val COMPASS_ON_FIXED_BASE = false
 
     /** Servo pan angle (deg) at which the camera faces the compass's forward axis. */
     const val SERVO_HORIZONTAL_CENTER_DEG = 90.0
@@ -54,6 +60,32 @@ object RigGeometry {
      * deployment would compute it from GPS + date via a WMM table.
      */
     const val MAGNETIC_DECLINATION_DEG = 0.0
+
+    // NB: there's no compass↔mic-array constant offset. With the compass
+    // on the moving head and the mic array on the fixed tripod, that
+    // relationship isn't a mechanical constant — it changes every time
+    // the head rotates. The acoustic-bearing path resolves this by
+    // capturing the compass reading once at setup time (via
+    // SniperViewModel.calibrateTripodWorldBearing), when the head is
+    // centred at servo 90° / pointing at the tripod-forward direction.
+    // That captured value plays the role of the offset for the lifetime
+    // of the calibration; operator re-calibrates after moving the rig.
+
+    /**
+     * Angular offset (deg) between the mic array's azimuth-zero axis
+     * and the pan servo's center (90°) position. The mic array and the
+     * servo are both bolted to the fixed tripod with mic 0° aligned to
+     * servo 90° — so the conversion is:
+     *
+     *   servo_horizontal_deg = mic_azim_deg + MIC_TO_SERVO_OFFSET_DEG
+     *
+     * Used by the SET_SERVO_ANGLES slew path (see
+     * [com.example.mysnipeit.data.repository.SlewCommandMode]).
+     * Independent of [MIC_ARRAY_OFFSET_DEG]: this one is about the
+     * mic↔servo relationship (no compass), that one is about the
+     * compass↔mic relationship (used for display).
+     */
+    const val MIC_TO_SERVO_OFFSET_DEG = 90.0
 }
 
 /** Mean Earth radius (m) — fine for the equirectangular projection below. */

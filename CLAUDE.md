@@ -23,7 +23,7 @@ Android tactical operator app that talks to a **Raspberry Pi 5** mounted on a re
 - **Maps:** `play-services-maps` + `maps-compose` 4.3.0, plus `play-services-location` (FusedLocationProvider). Google Maps API key injected via Secrets Gradle plugin as `${MAPS_API_KEY}` in the manifest — put it in `local.properties` as `MAPS_API_KEY=...`.
 - **Permissions runtime:** Accompanist Permissions 0.32.0. Location permission is requested manually in `MainActivity` (not via Accompanist there).
 - **JSON:** Gson 2.10.1 (kotlinx-serialization is in the catalog but not applied).
-- **Persistence:** `SharedPreferences` only ("snipeit" prefs: `dark_theme` boolean, `cartridge_id` + `rifle_id` strings for the ballistic loadout). No Room, no DataStore.
+- **Persistence:** `SharedPreferences` only ("snipeit" prefs: `dark_theme` boolean, `cartridge_id` + `rifle_id` strings for the ballistic loadout, `tripod_world_bearing_deg` float + `tripod_calibrated_at_ms` long for the operator-calibrated mic-array world-bearing offset and its capture timestamp). No Room, no DataStore.
 
 ## Repo layout
 
@@ -79,7 +79,8 @@ MySnipeIt/
 
 ```
 RPi5 ──WS:8555──► RaspberryPiClient ──StateFlow──► SniperRepository ──StateFlow──► SniperViewModel ──collectAsState──► Composables
-     ──HTTP:8000◄── (commands: calibrate, manual target, emergency_stop, select_target)
+     ◄──WS:8555── (commands: select_target lock/unlock, set_servo_angles slew — via sendWsCommand)
+     ──HTTP:8000◄── (calibrate, manual target, emergency_stop — Pi has no HTTP server yet, no-ops)
      ──RTSP:8554──► TacticalVideoPlayer (ExoPlayer RTSP)
 ```
 
@@ -93,6 +94,10 @@ Exposed from `SniperViewModel`:
 - `sensorData: StateFlow<SensorData?>` — RAW stream straight from the Pi; consumed by the Diagnostics LIVE SENSORS pane so the operator sees actual valid flags.
 - `latchedSensorData: StateFlow<SensorData?>` — sticky version of `sensorData`: each sub-frame holds its last VALID reading for up to `sensorLatchTimeoutMs` (default 5 s; tunable on `SniperViewModel`) before falling back to "—". Dashboard consumes this. Wind speed + direction latch independently (two valid flags), and the compass only latches when `heading_deg` is non-null so a missing heading is never substituted as `0°`.
 - `sensorHistory: StateFlow<List<SensorData>>` — rolling window of the last 10 raw frames (oldest first). Powers the Diagnostics LIVE SENSORS history strip.
+- `acousticEvent: StateFlow<AcousticEvent?>` — latest TDOA detection from the Pi's 4-mic module (separate WS message, not part of `ddl_frame`). Single-slot — dedupe/timeout/alert state is in `activeAudioAlert` below.
+- `tripodWorldBearingDeg: StateFlow<Double?>` — operator-calibrated world bearing of the tripod-forward direction (= mic 0° axis world bearing). Persisted in SharedPreferences. Set via dashboard MENU → Calibrate Bearing (`CalibrateBearingDialog`) when the operator centres the camera at servo 90° — the latched compass at that moment IS this value (since the compass is on the moving head). Null when never calibrated. The saved value also **expires** after `tripodCalibrationTimeoutMs` (default 90 min, tunable) — `isCalibrationValid()` / `effectiveTripodWorldBearingDeg()` gate its USE (the value isn't wiped, just ignored once stale). When uncalibrated OR expired, audio alerts still fire but show the RELATIVE mic angle instead of a world bearing (the SLEW still works — it only needs the raw azimuth).
+- `tripodCalibratedAtMs: StateFlow<Long?>` — wall-clock timestamp of the most recent successful calibration. Drives the "Last calibrated: X ago" line in the dialog and the `CalibrationAgeChip` in the dashboard top bar (tone bands: < 30 min On, 30 min–timeout Warn, ≥ timeout Danger + "CAL EXP"). The red band coincides with `tripodCalibrationTimeoutMs` — chip-red == expired.
+- `activeAudioAlert: StateFlow<AudioAlert?>` — derived alert state for the dashboard. Built from `acousticEvent` + `effectiveTripodWorldBearingDeg()` + `uiState.selectedTargetId`. Computes the world bearing via `worldBearingFromAcousticEvent` when the calibration is valid (sets `AudioAlert.isWorldBearing=true`); otherwise the alert carries the raw mic azimuth and `isWorldBearing=false` (UI shows "REL <angle>"). Dedupe/debounce key on the **raw mic azimuth** (always present, calibration-independent): dedupes same-source events within ±15° (refreshing in place), auto-dismisses 20 s after the FIRST event of a dedupe group (`audioAlertTimeoutMs`, tunable), debounces re-fires for 30 s after explicit DISMISS, and flips `isInteractive` based on whether a target is selected (locked → passive chip, unlocked → full card). Setters: `acceptAudioAlert()` (sends the slew via raw azimuth) and `dismissAudioAlert()` (arms the debounce).
 - `detectedTargets: StateFlow<List<DetectedTarget>>` — post-pacer/tracker output, NOT raw WS payload
 - `shootingSolution: StateFlow<ShootingSolution?>`
 - `systemStatus: StateFlow<SystemStatus>`
@@ -111,8 +116,8 @@ No Nav Compose graph — `SniperApp` does a manual `when (uiState.currentScreen)
 `RaspberryPiClient` is where almost all integration complexity lives. Read this whole file before touching networking code. **It has a long JSDoc footer at the bottom showing exact JSON shapes — do not invent shapes.**
 
 ### Ports
-- **WebSocket:** `ws://<ip>:8555` — sensor data, target detections, shooting solutions, `stream_ready` events, system status
-- **HTTP commands:** `POST http://<ip>:8000/api/command` with `{command, params}`
+- **WebSocket:** `ws://<ip>:8555` — bidirectional. Inbound (Pi→app): sensor data, target detections, shooting solutions, `acoustic_event`, `stream_ready`, system status. Outbound (app→Pi): commands via `RaspberryPiClient.sendWsCommand()` with envelope `{type:"command", command, params, timestamp}`. The Pi parses these in its WS receive handler (`websocket_server.c` → `ddl_bridge_handle_command`) and dispatches to the servo event bus. Outbound commands: `select_target` (lock/unlock → servo LOCK / SCAN events) and `set_servo_angles` (acoustic slew → `ddl_servo_set_target` + NOISE_DETECTED event, which slews + resumes the autonomous scan).
+- **HTTP commands:** `POST http://<ip>:8000/api/command` with `{command, params}` — `RaspberryPiClient.sendCommand()`. **The Pi has NO HTTP server**, so these are currently no-ops (`calibrate_system`, `set_manual_target`, `emergency_stop` from `SniperRepository` go here and land nowhere). Kept for when/if the Pi adds an HTTP server; all commands that actually need to work go over the WS instead.
 - **RTSP video:** `rtsp://<ip>:8554/<stream_name>` (stream name comes from `stream_ready` event)
 
 ### Incoming WS message types (handled in `handleWebSocketMessage`)
@@ -121,6 +126,7 @@ No Nav Compose graph — `SniperApp` does a manual `when (uiState.currentScreen)
 - `shooting_solution` — `{targetId, azimuth, elevation, windageAdjustment, elevationAdjustment, confidence, timestamp}`.
 - `stream_ready` — `{rtsp_port, stream_name}` → builds `rtspStreamUrl` and flips `streamReady`.
 - `system_status` — direct deserialize into `SystemStatus`.
+- `acoustic_event` — `{type, timestamp_us, azimuth_deg, confidence, peak_amplitude, duration_ms, valid}`. Single TDOA detection from the Pi's 4-mic module. `azimuth_deg` is in the **mic-array's own frame** (the array is bolted to the fixed tripod, doesn't move with the servos). World bearing is computed via `worldBearingFromAcousticEvent(event, tripodWorldBearingDeg)` where the second argument is the operator-calibrated `tripodWorldBearingDeg` (NOT the live compass — the compass is on the moving head, so it can't tell us where the mic array is pointing once the head has moved). Until calibration runs (or after it expires), the world bearing is null and the alert shows the RELATIVE mic angle instead — the alert still fires and SLEW still works (slew only needs the raw azimuth + 90° → servo).
 
 ### Detection pipeline (do not break this)
 
@@ -179,7 +185,7 @@ Runtime permission flow: `MainActivity.ensureLocationPermission()` checks `ACCES
 - **Hardcoded video resolution** — 1920×1080 in `TacticalVideoPlayer.kt`. If the Pi ever changes resolution, this breaks bbox scaling.
 - **`previousScreen` nav is a hack** — manual back-stack tracking instead of Nav Compose. Tolerable for 5 screens, would need replacing if nav gets richer.
 - **Almost no tests** — `ExampleInstrumentedTest`/`ExampleUnitTest` are unmodified AS templates. The one real suite is `TargetLocalizerTest` (pure-math geodesy for the ballistics localizer).
-- **`RigGeometry` constants are UNVERIFIED** — `TargetLocalizer.kt` assumes compass on the fixed base, servo pan/tilt centered at 90°, declination 0. One field test against the real rig must confirm/flip these; tests in `TargetLocalizerTest` encode the same assumptions.
+- **`RigGeometry` constants reflect the real rig** — `COMPASS_ON_FIXED_BASE = false` (the compass is bolted to the moving camera arm, so its reading IS the camera's pointing direction — servo pan is NOT added on top), servo pan/tilt centered at 90°, declination 0, and `MIC_TO_SERVO_OFFSET_DEG = 90.0` (mic↔servo, used for the SLEW path; per Pi-side spec, mic 0° aligns to servo 90°). There's no compass↔mic-array constant — the acoustic-bearing path uses an operator-calibrated `tripodWorldBearingDeg` (set via MENU → Calibrate Bearing) instead of a static constant, because the compass is on the moving head while the mics are on the fixed tripod, so their relationship isn't a mechanical constant.
 - **Hardcoded device list** — `availableDevices` in `SniperViewModel` is a fixed 4 entries. Real device discovery isn't implemented.
 - **Strings are mostly inlined** — `res/values/strings.xml` only has `app_name`. Most UI strings (chip labels, button text, etc.) are hardcoded literals in Composables. Not translation-ready.
 - **`compass.heading_deg` can be JSON `null`** — the Pi's C `build_json` emits the literal token `null` (not a number) when the magnetometer hasn't fixed yet. `CompassFrame.headingDeg` is therefore `Float?`. Always read it via `compassHeadingDeg()` which gates on both `valid` and non-null; never treat a missing heading as `0°` (true north).

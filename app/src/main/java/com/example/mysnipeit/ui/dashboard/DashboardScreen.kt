@@ -6,6 +6,11 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
@@ -15,6 +20,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
 import com.example.mysnipeit.data.ballistics.FiringSolution
+import com.example.mysnipeit.data.models.AudioAlert
 import com.example.mysnipeit.data.models.ConnectionState
 import com.example.mysnipeit.data.models.DetectedTarget
 import com.example.mysnipeit.data.models.SensorData
@@ -27,6 +33,7 @@ import com.example.mysnipeit.data.models.temperatureC
 import com.example.mysnipeit.data.models.windDirectionDeg
 import com.example.mysnipeit.data.models.windSpeedMps
 import com.example.mysnipeit.ui.theme.*
+import kotlinx.coroutines.delay
 
 /**
  * Operator HUD — redesigned to the design's "A layout + dense sensor bar"
@@ -52,6 +59,12 @@ fun DashboardScreen(
     selectedTargetId: String?,
     streamReady: Boolean,
     rtspStreamUrl: String?,
+    audioAlert: AudioAlert?,
+    audioAlertTimeoutMs: Long,
+    onAudioAlertAccept: () -> Unit,
+    onAudioAlertDismiss: () -> Unit,
+    tripodCalibratedAtMs: Long?,
+    tripodCalibrationTimeoutMs: Long,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onTargetSelect: (String) -> Unit = {},
@@ -91,6 +104,13 @@ fun DashboardScreen(
                     fontFamily = JetBrainsMono,
                 )
             }
+
+            // World-bearing calibration age. Shown only when calibration
+            // exists; tone gets warmer (Warn / Danger) as it ages so the
+            // operator gets a visual nudge to recalibrate after long
+            // sessions. The calibration itself NEVER expires — this is
+            // purely a hint.
+            tripodCalibratedAtMs?.let { CalibrationAgeChip(it, tripodCalibrationTimeoutMs) }
 
             // Menu (kept; opens the Diagnostics shortcut dialog from MainActivity)
             TopBarIconButton(label = "MENU", onClick = onMenuClick)
@@ -138,6 +158,24 @@ fun DashboardScreen(
                 )
             }
 
+            // Bottom-right (above the sensor strip): acoustic alert overlay.
+            // Renders as a full card (with SLEW / DISMISS) when no target is
+            // locked, or as a passive chip when one is — the AudioAlert
+            // composable picks the mode from the alert's isInteractive flag,
+            // which the ViewModel flips reactively on lock-state changes.
+            // bottom padding clears the 68 dp sensor strip + a small gap.
+            audioAlert?.let { a ->
+                AudioAlertOverlay(
+                    alert = a,
+                    timeoutMs = audioAlertTimeoutMs,
+                    onAccept = onAudioAlertAccept,
+                    onDismiss = onAudioAlertDismiss,
+                    modifier = Modifier
+                        .align(Alignment.BottomEnd)
+                        .padding(end = 16.dp, bottom = 84.dp),
+                )
+            }
+
             // Bottom: dense 8-cell sensor strip + UNLOCK button
             SensorStrip(
                 sensorData = sensorData,
@@ -152,6 +190,43 @@ fun DashboardScreen(
             )
         }
     }
+}
+
+// ----------------------------------------------------------------------------
+// World-bearing calibration age chip
+//
+// Tone bands (timeoutMs = SniperViewModel.tripodCalibrationTimeoutMs):
+//   < 30 min        On     (fresh)
+//   30 min-timeout  Warn   (consider recalibrating)
+//   >= timeout      Danger + "CAL EXP" — the calibration has EXPIRED;
+//                   acoustic alerts now show the relative mic angle until
+//                   the operator recalibrates.
+//
+// The amber band is a POC default; the red/expiry point is the actual
+// functional timeout passed in from the ViewModel.
+// ----------------------------------------------------------------------------
+private const val CALIB_AMBER_THRESHOLD_MS = 30L * 60_000L
+
+@Composable
+private fun CalibrationAgeChip(calibratedAtMs: Long, timeoutMs: Long) {
+    var nowMs by remember(calibratedAtMs) { mutableStateOf(System.currentTimeMillis()) }
+    LaunchedEffect(calibratedAtMs) {
+        while (true) {
+            nowMs = System.currentTimeMillis()
+            delay(30_000)
+        }
+    }
+    val ageMs = (nowMs - calibratedAtMs).coerceAtLeast(0L)
+    val expired = ageMs >= timeoutMs
+    val tone = when {
+        expired -> ChipTone.Danger
+        ageMs >= CALIB_AMBER_THRESHOLD_MS -> ChipTone.Warn
+        else -> ChipTone.On
+    }
+    Chip(
+        text = if (expired) "CAL EXP" else "CAL ${formatCalibrationAgeCompact(ageMs)}",
+        tone = tone,
+    )
 }
 
 // ----------------------------------------------------------------------------

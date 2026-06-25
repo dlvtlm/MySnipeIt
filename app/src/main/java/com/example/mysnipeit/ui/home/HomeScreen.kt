@@ -80,8 +80,8 @@ fun HomeScreen(
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
                 StatusBullet(text = "TERMINAL READY")
-                StatusBullet(text = "4 NODES DETECTED")
-                StatusBullet(text = "MESH HEALTHY")
+                //StatusBullet(text = "4 NODES DETECTED")
+                //StatusBullet(text = "MESH HEALTHY")
             }
 
             // Centered terminal: SECURE TERMINAL → SNIPEIT → subtitle → buttons
@@ -90,7 +90,7 @@ fun HomeScreen(
                 horizontalAlignment = Alignment.CenterHorizontally,
             ) {
                 Text(
-                    text = "// SECURE TERMINAL",
+                    text = " ",
                     color = t.inkDim,
                     fontSize = 11.sp,
                     letterSpacing = 0.4.em,
@@ -157,7 +157,7 @@ fun HomeScreen(
 
             // Bottom footer
             Text(
-                text = "AUTHORIZED PERSONNEL ONLY · UNCLASSIFIED//FOUO",
+                text = "AUTHORIZED PERSONNEL ONLY",
                 color = t.inkMute,
                 fontSize = 9.sp,
                 letterSpacing = 0.3.em,

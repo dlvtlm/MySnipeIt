@@ -6,6 +6,7 @@ import androidx.lifecycle.viewModelScope
 import com.example.mysnipeit.data.ballistics.FiringSolution
 import com.example.mysnipeit.data.ballistics.localizeTarget
 import com.example.mysnipeit.data.ballistics.solveFiringSolution
+import com.example.mysnipeit.data.ballistics.worldBearingFromAcousticEvent
 import com.example.mysnipeit.data.location.DeviceLocationProvider
 import com.example.mysnipeit.data.models.*
 import com.example.mysnipeit.data.network.WifiBinder
@@ -67,6 +68,84 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     fun selectRifle(id: String) {
         _selectedRifle.value = BallisticProfiles.rifleById(id)
         prefs.edit().putString("rifle_id", id).apply()
+    }
+
+    // --- Tripod world bearing (operator-calibrated) -------------------------
+    // Captured once at setup time when the operator centres the camera at
+    // servo 90° (tripod-forward) and taps MENU → Calibrate Bearing. At that
+    // moment, the compass — which is on the moving head, not the fixed
+    // tripod — reads the world bearing of the tripod-forward direction,
+    // which is also the world bearing of the mic array's 0° axis. This
+    // captured value is what acoustic events get added to.
+    //
+    // Persisted to SharedPreferences (Float) so it survives app restart;
+    // operator re-calibrates after moving the tripod.
+    private val _tripodWorldBearingDeg = MutableStateFlow<Double?>(
+        if (prefs.contains("tripod_world_bearing_deg"))
+            prefs.getFloat("tripod_world_bearing_deg", 0f).toDouble()
+        else null
+    )
+    val tripodWorldBearingDeg: StateFlow<Double?> = _tripodWorldBearingDeg.asStateFlow()
+
+    /**
+     * Wall-clock time of the most recent successful calibration. Lets the
+     * UI render a "last calibrated: X min ago" hint without expiring the
+     * calibration itself — option (B) from the design conversation.
+     * Persisted alongside the value as `tripod_calibrated_at_ms`.
+     */
+    private val _tripodCalibratedAtMs = MutableStateFlow<Long?>(
+        if (prefs.contains("tripod_calibrated_at_ms"))
+            prefs.getLong("tripod_calibrated_at_ms", 0L).takeIf { it > 0L }
+        else null
+    )
+    val tripodCalibratedAtMs: StateFlow<Long?> = _tripodCalibratedAtMs.asStateFlow()
+
+    /**
+     * How long a calibration stays valid before it's treated as expired.
+     * Past this age the saved world bearing is no longer trusted (the
+     * operator has probably moved the tripod, or it's just gone stale),
+     * so acoustic alerts fall back to showing the RELATIVE mic angle
+     * instead of a world bearing. The saved value isn't wiped — it stays
+     * for reference in the calibrate dialog — its USE is just gated.
+     *
+     * CHANGE THIS to tune the expiry window. Matches the dashboard
+     * CalibrationAgeChip's red band, so "chip turns red" == "expired".
+     */
+    val tripodCalibrationTimeoutMs: Long = 90L * 60_000L
+
+    /** True when a calibration exists AND hasn't aged past the timeout. */
+    fun isCalibrationValid(nowMs: Long = System.currentTimeMillis()): Boolean {
+        val at = _tripodCalibratedAtMs.value ?: return false
+        return (nowMs - at) < tripodCalibrationTimeoutMs
+    }
+
+    /** The world bearing to USE right now: the saved value if the
+     *  calibration is still valid, else null (expired or never set). */
+    private fun effectiveTripodWorldBearingDeg(nowMs: Long): Double? =
+        if (isCalibrationValid(nowMs)) _tripodWorldBearingDeg.value else null
+
+    /**
+     * Capture the current (latched) compass heading and save it as the
+     * tripod-forward world bearing. Caller is responsible for having the
+     * camera centred at servo 90° / pointing at tripod-forward; the
+     * compass at that moment IS the bearing we want to store.
+     *
+     * Returns the captured value, or null when no compass fix is
+     * available — the UI shows "no fix" rather than silently saving
+     * garbage.
+     */
+    fun calibrateTripodWorldBearing(): Double? {
+        val compass = latchedSensorData.value.compassHeadingDeg()?.toDouble()
+            ?: return null
+        val now = System.currentTimeMillis()
+        _tripodWorldBearingDeg.value = compass
+        _tripodCalibratedAtMs.value = now
+        prefs.edit()
+            .putFloat("tripod_world_bearing_deg", compass.toFloat())
+            .putLong("tripod_calibrated_at_ms", now)
+            .apply()
+        Log.d("SniperViewModel", "Tripod world bearing calibrated to $compass°")
+        return compass
     }
 
     // --- Device GPS --------------------------------------------------------
@@ -179,6 +258,11 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     // [firingSolution] below). The repository flow stays in place in case
     // the Pi still sends it; it just isn't exposed to the UI anymore.
     val systemStatus: StateFlow<SystemStatus> = repository.systemStatus
+    // Raw acoustic events from the Pi's 4-mic TDOA module. The dashboard
+    // alert UI (added in a later commit) consumes a derived flow that
+    // applies dedupe + auto-dismiss; this raw flow is what the Diagnostics
+    // LIVE SENSORS pane shows so the operator can see actual flag state.
+    val acousticEvent: StateFlow<AcousticEvent?> = repository.acousticEvent
 
     // --- Sensor latching + history -----------------------------------------
     // When the Pi reports a sub-frame with valid=false, the dashboard would
@@ -358,6 +442,208 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
                 wind = latchedWind,
             ),
         )
+    }
+
+    // --- Acoustic alert state machine ---------------------------------------
+    // Transforms the raw `acousticEvent` stream into a derived
+    // `activeAudioAlert` that:
+    //   - converts the mic-frame azimuth into a world bearing (compass +
+    //     RigGeometry.MIC_ARRAY_OFFSET_DEG via worldBearingFromAcousticEvent);
+    //   - dedupes same-source events within audioAlertDedupeWindowDeg (refreshes
+    //     the existing alert in place instead of replacing it with a new card);
+    //   - auto-dismisses an alert after audioAlertTimeoutMs from FIRST detection
+    //     (timeout is NOT refreshed on dedupe — a continuously-firing source
+    //     still clears itself eventually so the HUD doesn't accumulate stale
+    //     alerts);
+    //   - suppresses re-firing within audioAlertDedupeWindowDeg of a recently
+    //     dismissed bearing for dismissDebounceMs, so an explicit DISMISS isn't
+    //     instantly overruled by the next event from the same source;
+    //   - flips isInteractive based on whether a target is currently selected
+    //     (locked engagement → passive chip; deselected → full card with
+    //     buttons), and flips back automatically when the operator deselects.
+
+    /** Auto-dismiss timeout. Tunable — same pattern as sensorLatchTimeoutMs.
+     *  Counted from the FIRST event of a dedupe group, not the latest. */
+    val audioAlertTimeoutMs: Long = 20_000L
+
+    /** Two events within this angular distance (shortest path on the circle)
+     *  are treated as the same source — refresh the existing alert instead of
+     *  replacing it, and a recent DISMISS suppresses re-fires within this same
+     *  window. ±15° is roughly twice the typical TDOA error of a 4-mic array
+     *  at sub-100 m ranges. */
+    private val audioAlertDedupeWindowDeg: Double = 15.0
+
+    /** How long an explicit DISMISS suppresses re-firing for the same source. */
+    private val dismissDebounceMs: Long = 30_000L
+
+    /** How long the "SLEWING TO X°…" notice stays on screen after the
+     *  operator hits SLEW, before the alert is swept away. Long enough
+     *  to confirm the tap registered; short enough not to clutter. */
+    private val slewNoticeMs: Long = 1_500L
+
+    private val _activeAudioAlert = MutableStateFlow<AudioAlert?>(null)
+    /**
+     * Derived alert with dedupe + auto-dismiss + lock-aware render mode.
+     * The dashboard reads this for the corner card / passive chip. Null
+     * when no current alert (no event yet, dismissed, or timed out).
+     */
+    val activeAudioAlert: StateFlow<AudioAlert?> = _activeAudioAlert.asStateFlow()
+
+    // Raw mic azimuth of the last explicitly-dismissed source (the dedupe
+    // key), used to suppress re-fires for dismissDebounceMs.
+    private var lastDismissedBearing: Double? = null
+    private var lastDismissedAtMs: Long = 0L
+
+    init {
+        // React to new raw events from the Pi.
+        viewModelScope.launch {
+            repository.acousticEvent.collect { applyAcousticEvent(it) }
+        }
+        // React to lock-state changes — flip isInteractive without
+        // mutating any other field of the alert.
+        viewModelScope.launch {
+            uiState.collect { state -> updateAlertInteractivity(state.selectedTargetId) }
+        }
+        // Periodic timeout sweep.
+        viewModelScope.launch {
+            while (isActive) {
+                delay(500)
+                sweepAlertTimeout()
+            }
+        }
+    }
+
+    private fun applyAcousticEvent(event: AcousticEvent?) {
+        // Need a VALID event to do anything; an invalid TDOA solve isn't
+        // actionable. (The Diagnostics LIVE SENSORS pane still shows the
+        // raw event regardless, so the operator sees events are arriving.)
+        if (event == null || !event.valid) return
+        val now = System.currentTimeMillis()
+
+        // World bearing only when the calibration is present AND unexpired.
+        // Otherwise the alert still fires (Option B) but shows the RELATIVE
+        // mic angle — the SLEW action works either way since it only needs
+        // the raw azimuth (mic_azim + 90 → servo).
+        val worldBearing = worldBearingFromAcousticEvent(event, effectiveTripodWorldBearingDeg(now))
+        val isWorld = worldBearing != null
+        val rawAzimuth = event.azimuthDeg.toDouble()
+        // Value shown on the card: world bearing when calibrated, else the
+        // raw relative angle.
+        val displayBearing = worldBearing ?: rawAzimuth
+
+        // De-dupe / debounce on the RAW mic azimuth — it's always present
+        // (calibrated or not) and two events from the same physical source
+        // have a similar raw angle regardless of calibration state.
+        val dismissed = lastDismissedBearing
+        if (dismissed != null &&
+            now - lastDismissedAtMs < dismissDebounceMs &&
+            angularDistance(dismissed, rawAzimuth) <= audioAlertDedupeWindowDeg
+        ) {
+            return
+        }
+
+        val interactive = _uiState.value.selectedTargetId.isNullOrEmpty()
+        val current = _activeAudioAlert.value
+        val isSameSource = current != null &&
+            angularDistance(current.rawAzimuthDeg, rawAzimuth) <= audioAlertDedupeWindowDeg
+
+        _activeAudioAlert.value = if (isSameSource && current != null) {
+            // Dedupe-then-replace: refresh confidence/amplitude/duration and
+            // bump lastUpdated, but keep firstSeenAtMs so the timeout still
+            // counts from the ORIGINAL detection. Re-evaluate the bearing too
+            // so a calibration done WHILE an alert is up upgrades it to world.
+            current.copy(
+                bearingDeg = displayBearing,
+                rawAzimuthDeg = rawAzimuth,
+                isWorldBearing = isWorld,
+                confidence = event.confidence,
+                peakAmplitude = event.peakAmplitude,
+                durationMs = event.durationMs,
+                lastUpdatedAtMs = now,
+                isInteractive = interactive,
+            )
+        } else {
+            AudioAlert(
+                bearingDeg = displayBearing,
+                rawAzimuthDeg = rawAzimuth,
+                isWorldBearing = isWorld,
+                confidence = event.confidence,
+                peakAmplitude = event.peakAmplitude,
+                durationMs = event.durationMs,
+                firstSeenAtMs = now,
+                lastUpdatedAtMs = now,
+                isInteractive = interactive,
+            )
+        }
+    }
+
+    private fun updateAlertInteractivity(selectedTargetId: String?) {
+        val current = _activeAudioAlert.value ?: return
+        val newInteractive = selectedTargetId.isNullOrEmpty()
+        if (current.isInteractive != newInteractive) {
+            _activeAudioAlert.value = current.copy(isInteractive = newInteractive)
+        }
+    }
+
+    private fun sweepAlertTimeout() {
+        val current = _activeAudioAlert.value ?: return
+        val now = System.currentTimeMillis()
+        // Accepted alerts get a brief "SLEWING…" notice then clear,
+        // independent of the main 20 s auto-dismiss timer.
+        if (current.isAccepted && now - current.acceptedAtMs > slewNoticeMs) {
+            _activeAudioAlert.value = null
+            return
+        }
+        if (now - current.firstSeenAtMs > audioAlertTimeoutMs) {
+            _activeAudioAlert.value = null
+        }
+    }
+
+    /**
+     * Operator tapped SLEW. Marks the alert accepted (so the UI flips
+     * to the "SLEWING TO X°…" notice), sends the slew command to the
+     * Pi via the repository (the actual contract — `slew_to_bearing`
+     * vs `set_servo_angles` — is picked by [SniperRepository.SLEW_COMMAND_MODE]),
+     * and lets the periodic sweep clear the alert after [slewNoticeMs].
+     *
+     * No dismiss-debounce on accept — if events keep arriving from the
+     * accepted direction while the Pi auto-scans there, that's expected
+     * (the operator chose to engage that direction) and the next event
+     * will alert normally.
+     *
+     * Returns the bearing so callers can log / display it; the side
+     * effect (HTTP command + alert flip) is what matters.
+     */
+    fun acceptAudioAlert(): Double? {
+        val current = _activeAudioAlert.value ?: return null
+        // Send BOTH so SniperRepository can pick the right one per
+        // SLEW_COMMAND_MODE without recomputing anything.
+        repository.slewToAcousticContact(
+            rawMicAzimuthDeg = current.rawAzimuthDeg,
+            worldBearingDeg = current.bearingDeg,
+        )
+        _activeAudioAlert.value = current.copy(
+            isAccepted = true,
+            acceptedAtMs = System.currentTimeMillis(),
+        )
+        return current.bearingDeg
+    }
+
+    /** Operator dismissed the alert. Clears it and remembers the source's
+     *  RAW azimuth so same-source events within dismissDebounceMs don't
+     *  immediately re-alert (raw azimuth is the dedupe key — see
+     *  applyAcousticEvent). */
+    fun dismissAudioAlert() {
+        val current = _activeAudioAlert.value ?: return
+        lastDismissedBearing = current.rawAzimuthDeg
+        lastDismissedAtMs = System.currentTimeMillis()
+        _activeAudioAlert.value = null
+    }
+
+    /** Shortest-path angular distance between two bearings, in degrees. */
+    private fun angularDistance(a: Double, b: Double): Double {
+        val d = Math.abs(a - b) % 360.0
+        return if (d > 180.0) 360.0 - d else d
     }
 
     private companion object {

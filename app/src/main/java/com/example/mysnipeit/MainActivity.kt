@@ -26,6 +26,8 @@ import com.example.mysnipeit.ui.device.DeviceSelectionScreen
 import com.example.mysnipeit.ui.map.MapScreen
 import com.example.mysnipeit.ui.dashboard.DashboardScreen
 import android.util.Log
+import com.example.mysnipeit.data.models.compassHeadingDeg
+import com.example.mysnipeit.ui.dashboard.CalibrateBearingDialog
 import com.example.mysnipeit.ui.dashboard.LoadoutDialog
 import com.example.mysnipeit.ui.diagnostics.DiagnosticsScreen
 
@@ -105,6 +107,8 @@ fun SniperApp(viewModel: SniperViewModel) {
     val sensorData by viewModel.sensorData.collectAsStateWithLifecycle()
     val latchedSensorData by viewModel.latchedSensorData.collectAsStateWithLifecycle()
     val sensorHistory by viewModel.sensorHistory.collectAsStateWithLifecycle()
+    val acousticEvent by viewModel.acousticEvent.collectAsStateWithLifecycle()
+    val activeAudioAlert by viewModel.activeAudioAlert.collectAsStateWithLifecycle()
     val detectedTargets by viewModel.detectedTargets.collectAsStateWithLifecycle()
     val firingSolution by viewModel.firingSolution.collectAsStateWithLifecycle()
     val systemStatus by viewModel.systemStatus.collectAsStateWithLifecycle()
@@ -125,11 +129,18 @@ fun SniperApp(viewModel: SniperViewModel) {
     // no navigation away from it.
     val showMenu = uiState.dashboardMenuOpen
     var showLoadout by remember { mutableStateOf(false) }
+    var showCalibrate by remember { mutableStateOf(false) }
 
     // Ballistic loadout — persisted cartridge + rifle profile picks; chosen
     // via MENU → Loadout on the dashboard, consumed by the ballistic solver.
     val selectedCartridge by viewModel.selectedCartridge.collectAsStateWithLifecycle()
     val selectedRifle by viewModel.selectedRifle.collectAsStateWithLifecycle()
+
+    // Tripod world bearing — operator-calibrated offset that converts mic-
+    // frame acoustic-event bearings into true-north world bearings. Saved
+    // via MENU → Calibrate Bearing.
+    val tripodWorldBearingDeg by viewModel.tripodWorldBearingDeg.collectAsStateWithLifecycle()
+    val tripodCalibratedAtMs by viewModel.tripodCalibratedAtMs.collectAsStateWithLifecycle()
 
     // Diagnostics → MOCK MODE toggle. When ON the app streams synthetic
     // sensor data anchored to the operator's GPS so the ballistic
@@ -179,6 +190,15 @@ fun SniperApp(viewModel: SniperViewModel) {
                 selectedTargetId = selectedTargetId,
                 streamReady = streamReady,
                 rtspStreamUrl = rtspStreamUrl,
+                audioAlert = activeAudioAlert,
+                audioAlertTimeoutMs = viewModel.audioAlertTimeoutMs,
+                // SLEW returns the world bearing; step 5 will use it to
+                // send an HTTP command to the Pi. For now we just clear
+                // the alert (acceptAudioAlert already does that).
+                onAudioAlertAccept = { viewModel.acceptAudioAlert() },
+                onAudioAlertDismiss = { viewModel.dismissAudioAlert() },
+                tripodCalibratedAtMs = tripodCalibratedAtMs,
+                tripodCalibrationTimeoutMs = viewModel.tripodCalibrationTimeoutMs,
                 onTargetSelect = { targetId ->
                     if (targetId.isEmpty()) viewModel.deselectTarget()
                     else viewModel.selectTarget(targetId)
@@ -211,6 +231,10 @@ fun SniperApp(viewModel: SniperViewModel) {
                         viewModel.setDashboardMenuOpen(false)
                         showLoadout = true
                     },
+                    onCalibrateClick = {
+                        viewModel.setDashboardMenuOpen(false)
+                        showCalibrate = true
+                    },
                 )
             }
 
@@ -223,6 +247,17 @@ fun SniperApp(viewModel: SniperViewModel) {
                     onDismiss = { showLoadout = false },
                 )
             }
+
+            if (showCalibrate) {
+                CalibrateBearingDialog(
+                    liveCompassDeg = latchedSensorData.compassHeadingDeg(),
+                    currentCalibrationDeg = tripodWorldBearingDeg,
+                    currentCalibratedAtMs = tripodCalibratedAtMs,
+                    calibrationTimeoutMs = viewModel.tripodCalibrationTimeoutMs,
+                    onCapture = { viewModel.calibrateTripodWorldBearing() },
+                    onDismiss = { showCalibrate = false },
+                )
+            }
         }
 
         AppScreen.DIAGNOSTICS -> {
@@ -230,6 +265,7 @@ fun SniperApp(viewModel: SniperViewModel) {
                 onBackClick = { viewModel.goBackFromDiagnostics() },
                 sensorData = sensorData,
                 sensorHistory = sensorHistory,
+                acousticEvent = acousticEvent,
                 forceMockMode = forceMockMode,
                 onForceMockModeChange = { viewModel.setForceMockMode(it) },
                 isDarkTheme = darkTheme,
@@ -244,6 +280,7 @@ fun DashboardMenu(
     onDismiss: () -> Unit,
     onDiagnosticsClick: () -> Unit,
     onLoadoutClick: () -> Unit,
+    onCalibrateClick: () -> Unit,
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -257,6 +294,7 @@ fun DashboardMenu(
             Column {
                 MenuEntry(icon = "⚙ ", label = "Diagnostics", onClick = onDiagnosticsClick)
                 MenuEntry(icon = "⌖ ", label = "Loadout", onClick = onLoadoutClick)
+                MenuEntry(icon = "⏱ ", label = "Calibrate Bearing", onClick = onCalibrateClick)
             }
         },
         confirmButton = {
