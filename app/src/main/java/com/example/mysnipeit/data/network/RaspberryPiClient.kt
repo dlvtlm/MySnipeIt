@@ -263,8 +263,13 @@ class RaspberryPiClient {
                 Log.d(TAG, "WebSocket closed: $reason")
                 stopKeepalive()
                 updateSystemStatus(ConnectionState.DISCONNECTED)
-                _streamReady.value = false
-                _rtspStreamUrl.value = null
+                // Deliberately do NOT clear the RTSP stream state here. The WS
+                // is only the control channel; the RTSP video is a separate
+                // connection to the same host. A transient WS blip (which is
+                // common on the flaky soft-AP link) must not tear down video —
+                // the video player + stall watchdog keep the RTSP session alive
+                // independently. streamReady / rtspStreamUrl are only cleared on
+                // an explicit disconnect() (operator leaving the live view).
             }
 
             override fun onError(ex: Exception?) {
@@ -686,6 +691,10 @@ class RaspberryPiClient {
         _detectedTargets.value = emptyList()
         _shootingSolution.value = null
         _acousticEvent.value = null
+        // Explicit teardown (operator left the live view) — NOW clear the video
+        // stream state. (A transient WS close no longer does this; see onClose.)
+        _streamReady.value = false
+        _rtspStreamUrl.value = null
     }
 
     fun isConnected(): Boolean {

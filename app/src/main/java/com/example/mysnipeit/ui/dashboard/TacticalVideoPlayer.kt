@@ -83,6 +83,10 @@ fun TacticalVideoPlayer(
     onTargetClick: (DetectedTarget) -> Unit = {},
     onTargetLockToggle: (String, Boolean) -> Unit = { _, _ -> },
     onTargetSelect: (String) -> Unit = {},
+    // Reports actual video health: true while frames are rendering, false when
+    // stalled / reconnecting / not streaming. Drives the dashboard's VIDEO chip
+    // from real frame flow instead of the WS control-channel state.
+    onVideoHealthChanged: (Boolean) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -94,17 +98,18 @@ fun TacticalVideoPlayer(
     // Track locked target (only one at a time)
     var lockedTargetId by remember { mutableStateOf<String?>(null) }
 
-    // Load stream only when both connected AND stream is ready
-    LaunchedEffect(connectionState, streamReady, videoStreamUrl) {
-        if (connectionState == ConnectionState.CONNECTED &&
-            streamReady &&
-            videoStreamUrl != null) {
-
+    // Load the stream whenever it's ready — independent of the WS control
+    // channel. The RTSP video is a separate connection to the same host, so a
+    // transient WS blip must NOT tear it down (the WS close no longer clears
+    // rtspStreamUrl either; see RaspberryPiClient.onClose). Playback is torn
+    // down only when the stream is genuinely gone (operator left → disconnect()
+    // nulls the url).
+    LaunchedEffect(streamReady, videoStreamUrl) {
+        if (streamReady && videoStreamUrl != null) {
             Log.d("TacticalVideoPlayer", "Stream ready signal received, loading: $videoStreamUrl")
             exoPlayer.setMediaSource(buildRtspMediaSource(videoStreamUrl))
             exoPlayer.playWhenReady = true
             exoPlayer.prepare()
-
         } else {
             if (!streamReady) {
                 Log.d("TacticalVideoPlayer", "Waiting for stream_ready signal from server...")
@@ -117,28 +122,39 @@ fun TacticalVideoPlayer(
     // Stall watchdog + auto-reconnect. Detects a wedged/frozen RTSP session
     // (playback position not advancing while we're supposed to be playing) and
     // rebuilds it — self-healing what previously required the operator to back
-    // out and reconnect by hand. Retries with exponential backoff while the WS
-    // says the server is up; resets on healthy playback. Reads the latest url /
-    // server-up via rememberUpdatedState so the loop never restarts mid-watch.
+    // out and reconnect by hand. Retries with exponential backoff while a stream
+    // is expected; resets on healthy playback. Gated on `streamReady` only, NOT
+    // the WS control channel — video is independent of a WS blip. Also emits the
+    // frame-flow health used by the dashboard VIDEO chip. Reads latest url /
+    // streamReady / callback via rememberUpdatedState so the loop never restarts.
     val currentUrl by rememberUpdatedState(videoStreamUrl)
-    val serverUp by rememberUpdatedState(
-        connectionState == ConnectionState.CONNECTED && streamReady
-    )
+    val streamExpected by rememberUpdatedState(streamReady)
+    val healthCb by rememberUpdatedState(onVideoHealthChanged)
     LaunchedEffect(Unit) {
         var lastSeenUrl: String? = null
         var lastPos = 0L
         var lastProgressAt = System.currentTimeMillis()
         var backoffMs = STALL_RECONNECT_INITIAL_BACKOFF_MS
+        var reportedHealthy: Boolean? = null
+        // Only fires the callback when health actually flips, so the UI isn't
+        // spammed every poll.
+        fun reportHealth(healthy: Boolean) {
+            if (reportedHealthy != healthy) {
+                reportedHealthy = healthy
+                healthCb(healthy)
+            }
+        }
         while (isActive) {
             delay(STALL_POLL_INTERVAL_MS)
             val url = currentUrl
             // Not streaming (or a new stream just loaded): keep timers fresh so
             // we never trigger a spurious reconnect during setup / teardown.
-            if (url == null || !serverUp || url != lastSeenUrl) {
+            if (url == null || !streamExpected || url != lastSeenUrl) {
                 lastSeenUrl = url
                 lastPos = exoPlayer.currentPosition
                 lastProgressAt = System.currentTimeMillis()
                 backoffMs = STALL_RECONNECT_INITIAL_BACKOFF_MS
+                if (url == null || !streamExpected) reportHealth(false)
                 continue
             }
             val pos = exoPlayer.currentPosition
@@ -148,6 +164,7 @@ fun TacticalVideoPlayer(
                 lastPos = pos
                 lastProgressAt = now
                 backoffMs = STALL_RECONNECT_INITIAL_BACKOFF_MS
+                reportHealth(true)
                 continue
             }
             // Position frozen. Reconnect once it's been stuck past the timeout.
@@ -156,6 +173,7 @@ fun TacticalVideoPlayer(
                     "TacticalVideoPlayer",
                     "Stall detected (${now - lastProgressAt}ms no progress) — rebuilding RTSP session"
                 )
+                reportHealth(false)
                 exoPlayer.stop()
                 exoPlayer.clearMediaItems()
                 exoPlayer.setMediaSource(buildRtspMediaSource(url))

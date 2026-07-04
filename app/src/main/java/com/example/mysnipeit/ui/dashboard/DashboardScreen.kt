@@ -77,6 +77,11 @@ fun DashboardScreen(
     val t = LocalTactical.current
     val lockedTarget = detectedTargets.firstOrNull { it.id == selectedTargetId }
 
+    // Real video health, reported by TacticalVideoPlayer from actual frame flow
+    // (true while frames render, false when stalled/reconnecting). Drives the
+    // VIDEO chip — distinct from the WS control-channel state below.
+    var videoHealthy by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -86,14 +91,28 @@ fun DashboardScreen(
             device = "OPERATOR · LIVE",
             onBackClick = onBackClick,
         ) {
-            // RTSP / connection chip
+            // Control-channel (WebSocket) chip — sensors + commands. NOTE this
+            // is the WS link, NOT the video; video health is the VIDEO chip.
             val (chipText, chipTone) = when (systemStatus.connectionStatus) {
-                ConnectionState.CONNECTED -> "RTSP OK" to ChipTone.On
-                ConnectionState.CONNECTING -> "CONNECTING" to ChipTone.Warn
-                ConnectionState.DISCONNECTED -> "OFFLINE" to ChipTone.Danger
-                ConnectionState.ERROR -> "ERROR" to ChipTone.Danger
+                ConnectionState.CONNECTED -> "LINK OK" to ChipTone.On
+                ConnectionState.CONNECTING -> "LINK…" to ChipTone.Warn
+                ConnectionState.DISCONNECTED -> "LINK OFF" to ChipTone.Danger
+                ConnectionState.ERROR -> "LINK ERR" to ChipTone.Danger
             }
             Chip(text = chipText, tone = chipTone)
+
+            // Video chip — driven by ACTUAL RTP frame flow, not the WS state.
+            // Shown only when a stream is expected. Green when frames are
+            // rendering; amber "RECONNECTING" when the watchdog is rebuilding a
+            // stalled session (self-healing) so the operator knows video will
+            // return on its own.
+            if (streamReady) {
+                if (videoHealthy) {
+                    Chip(text = "VIDEO OK", tone = ChipTone.On)
+                } else {
+                    Chip(text = "VIDEO…", tone = ChipTone.Warn)
+                }
+            }
 
             systemStatus.batteryLevel?.let { bat ->
                 Text(
@@ -133,6 +152,7 @@ fun DashboardScreen(
                 onTargetClick = {},
                 onTargetSelect = onTargetSelect,
                 onTargetLockToggle = onTargetLockToggle,
+                onVideoHealthChanged = { videoHealthy = it },
                 modifier = Modifier.fillMaxSize(),
             )
 
