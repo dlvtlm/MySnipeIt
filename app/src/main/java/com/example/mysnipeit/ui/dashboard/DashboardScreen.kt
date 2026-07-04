@@ -65,6 +65,7 @@ fun DashboardScreen(
     onAudioAlertDismiss: () -> Unit,
     tripodCalibratedAtMs: Long?,
     tripodCalibrationTimeoutMs: Long,
+    rtspForceTcp: Boolean = true,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onTargetSelect: (String) -> Unit = {},
@@ -153,6 +154,7 @@ fun DashboardScreen(
                 onTargetSelect = onTargetSelect,
                 onTargetLockToggle = onTargetLockToggle,
                 onVideoHealthChanged = { videoHealthy = it },
+                forceTcp = rtspForceTcp,
                 modifier = Modifier.fillMaxSize(),
             )
 

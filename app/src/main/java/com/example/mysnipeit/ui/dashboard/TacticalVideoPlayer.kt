@@ -57,13 +57,15 @@ private const val STALL_RECONNECT_INITIAL_BACKOFF_MS = 1_000L
 private const val STALL_RECONNECT_MAX_BACKOFF_MS = 8_000L
 
 /**
- * Build the RTSP media source. Forces RTP-over-TCP to match the Pi's
- * `-rtsp_transport tcp` and avoid UDP loss/firewall issues on the AP network.
- * Extracted so the initial load and the stall watchdog build it identically.
+ * Build the RTSP media source. When [forceTcp] is true, forces RTP-over-TCP
+ * (matches the Pi's `-rtsp_transport tcp`, reliable but stalls on loss); when
+ * false, leaves the library default (UDP with TCP fallback), which degrades
+ * more gracefully on a lossy link. Extracted so the initial load and the stall
+ * watchdog build it identically.
  */
-private fun buildRtspMediaSource(url: String): MediaSource =
+private fun buildRtspMediaSource(url: String, forceTcp: Boolean): MediaSource =
     RtspMediaSource.Factory()
-        .setForceUseRtpTcp(true)
+        .apply { if (forceTcp) setForceUseRtpTcp(true) }
         .setTimeoutMs(8000)
         .createMediaSource(MediaItem.fromUri(url))
 
@@ -87,6 +89,10 @@ fun TacticalVideoPlayer(
     // stalled / reconnecting / not streaming. Drives the dashboard's VIDEO chip
     // from real frame flow instead of the WS control-channel state.
     onVideoHealthChanged: (Boolean) -> Unit = {},
+    // RTSP transport: true = force TCP (default), false = UDP w/ TCP fallback.
+    // Debug toggle for A/B testing on the lossy AP link. Flipping it reloads
+    // the stream with the new transport.
+    forceTcp: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -104,10 +110,10 @@ fun TacticalVideoPlayer(
     // rtspStreamUrl either; see RaspberryPiClient.onClose). Playback is torn
     // down only when the stream is genuinely gone (operator left → disconnect()
     // nulls the url).
-    LaunchedEffect(streamReady, videoStreamUrl) {
+    LaunchedEffect(streamReady, videoStreamUrl, forceTcp) {
         if (streamReady && videoStreamUrl != null) {
-            Log.d("TacticalVideoPlayer", "Stream ready signal received, loading: $videoStreamUrl")
-            exoPlayer.setMediaSource(buildRtspMediaSource(videoStreamUrl))
+            Log.d("TacticalVideoPlayer", "Stream ready signal received, loading: $videoStreamUrl (tcp=$forceTcp)")
+            exoPlayer.setMediaSource(buildRtspMediaSource(videoStreamUrl, forceTcp))
             exoPlayer.playWhenReady = true
             exoPlayer.prepare()
         } else {
@@ -130,6 +136,7 @@ fun TacticalVideoPlayer(
     val currentUrl by rememberUpdatedState(videoStreamUrl)
     val streamExpected by rememberUpdatedState(streamReady)
     val healthCb by rememberUpdatedState(onVideoHealthChanged)
+    val currentForceTcp by rememberUpdatedState(forceTcp)
     LaunchedEffect(Unit) {
         var lastSeenUrl: String? = null
         var lastPos = 0L
@@ -176,7 +183,7 @@ fun TacticalVideoPlayer(
                 reportHealth(false)
                 exoPlayer.stop()
                 exoPlayer.clearMediaItems()
-                exoPlayer.setMediaSource(buildRtspMediaSource(url))
+                exoPlayer.setMediaSource(buildRtspMediaSource(url, currentForceTcp))
                 exoPlayer.playWhenReady = true
                 exoPlayer.prepare()
                 // Give the new session time to come up before re-evaluating,
