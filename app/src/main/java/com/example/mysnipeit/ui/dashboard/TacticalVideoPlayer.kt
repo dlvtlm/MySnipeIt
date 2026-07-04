@@ -33,14 +33,39 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
+import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.ui.PlayerView
 import com.example.mysnipeit.R
 import com.example.mysnipeit.data.ballistics.FiringSolution
 import com.example.mysnipeit.data.models.DetectedTarget
+import com.example.mysnipeit.data.network.WifiPerfLock
 import com.example.mysnipeit.ui.components.TacticalCompass
 import com.example.mysnipeit.ui.theme.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import com.example.mysnipeit.data.models.ConnectionState
+
+// Stall watchdog tuning. The RTSP session can wedge after a Wi-Fi blackout —
+// frames stop rendering even though the transport recovers — and ExoPlayer has
+// no native recovery for it. We poll playback progress and, if it hasn't
+// advanced for STALL_TIMEOUT_MS while we're supposed to be playing, rebuild the
+// RTSP session (what a manual back-out-and-reconnect does). A fresh session also
+// gets a keyframe within ~1 s, which resets any accumulated latency.
+private const val STALL_POLL_INTERVAL_MS = 500L
+private const val STALL_TIMEOUT_MS = 3_000L
+private const val STALL_RECONNECT_INITIAL_BACKOFF_MS = 1_000L
+private const val STALL_RECONNECT_MAX_BACKOFF_MS = 8_000L
+
+/**
+ * Build the RTSP media source. Forces RTP-over-TCP to match the Pi's
+ * `-rtsp_transport tcp` and avoid UDP loss/firewall issues on the AP network.
+ * Extracted so the initial load and the stall watchdog build it identically.
+ */
+private fun buildRtspMediaSource(url: String): MediaSource =
+    RtspMediaSource.Factory()
+        .setForceUseRtpTcp(true)
+        .setTimeoutMs(8000)
+        .createMediaSource(MediaItem.fromUri(url))
 
 
 // Video resolution constants (hardcoded for POC)
@@ -76,13 +101,7 @@ fun TacticalVideoPlayer(
             videoStreamUrl != null) {
 
             Log.d("TacticalVideoPlayer", "Stream ready signal received, loading: $videoStreamUrl")
-            // Force RTP-over-TCP to match the Pi's `-rtsp_transport tcp` and avoid
-            // UDP packet loss / firewall issues on the AP network.
-            val mediaSource = RtspMediaSource.Factory()
-                .setForceUseRtpTcp(true)
-                .setTimeoutMs(8000)
-                .createMediaSource(MediaItem.fromUri(videoStreamUrl))
-            exoPlayer.setMediaSource(mediaSource)
+            exoPlayer.setMediaSource(buildRtspMediaSource(videoStreamUrl))
             exoPlayer.playWhenReady = true
             exoPlayer.prepare()
 
@@ -93,6 +112,71 @@ fun TacticalVideoPlayer(
             exoPlayer.stop()
             exoPlayer.clearMediaItems()
         }
+    }
+
+    // Stall watchdog + auto-reconnect. Detects a wedged/frozen RTSP session
+    // (playback position not advancing while we're supposed to be playing) and
+    // rebuilds it — self-healing what previously required the operator to back
+    // out and reconnect by hand. Retries with exponential backoff while the WS
+    // says the server is up; resets on healthy playback. Reads the latest url /
+    // server-up via rememberUpdatedState so the loop never restarts mid-watch.
+    val currentUrl by rememberUpdatedState(videoStreamUrl)
+    val serverUp by rememberUpdatedState(
+        connectionState == ConnectionState.CONNECTED && streamReady
+    )
+    LaunchedEffect(Unit) {
+        var lastSeenUrl: String? = null
+        var lastPos = 0L
+        var lastProgressAt = System.currentTimeMillis()
+        var backoffMs = STALL_RECONNECT_INITIAL_BACKOFF_MS
+        while (isActive) {
+            delay(STALL_POLL_INTERVAL_MS)
+            val url = currentUrl
+            // Not streaming (or a new stream just loaded): keep timers fresh so
+            // we never trigger a spurious reconnect during setup / teardown.
+            if (url == null || !serverUp || url != lastSeenUrl) {
+                lastSeenUrl = url
+                lastPos = exoPlayer.currentPosition
+                lastProgressAt = System.currentTimeMillis()
+                backoffMs = STALL_RECONNECT_INITIAL_BACKOFF_MS
+                continue
+            }
+            val pos = exoPlayer.currentPosition
+            val now = System.currentTimeMillis()
+            if (pos != lastPos) {
+                // Progress → healthy. Reset the stall timer and the backoff.
+                lastPos = pos
+                lastProgressAt = now
+                backoffMs = STALL_RECONNECT_INITIAL_BACKOFF_MS
+                continue
+            }
+            // Position frozen. Reconnect once it's been stuck past the timeout.
+            if (exoPlayer.playWhenReady && (now - lastProgressAt) >= STALL_TIMEOUT_MS) {
+                Log.w(
+                    "TacticalVideoPlayer",
+                    "Stall detected (${now - lastProgressAt}ms no progress) — rebuilding RTSP session"
+                )
+                exoPlayer.stop()
+                exoPlayer.clearMediaItems()
+                exoPlayer.setMediaSource(buildRtspMediaSource(url))
+                exoPlayer.playWhenReady = true
+                exoPlayer.prepare()
+                // Give the new session time to come up before re-evaluating,
+                // backing off so a truly-down server isn't hammered.
+                lastPos = 0L
+                lastProgressAt = System.currentTimeMillis()
+                delay(backoffMs)
+                backoffMs = (backoffMs * 2).coerceAtMost(STALL_RECONNECT_MAX_BACKOFF_MS)
+            }
+        }
+    }
+
+    // Hold a high-performance Wi-Fi lock (+ CPU wake lock) while the live view
+    // is open, to suppress client-side Wi-Fi power-save — the interaction that
+    // produced the periodic radio blackouts freezing the stream. See WifiPerfLock.
+    DisposableEffect(Unit) {
+        WifiPerfLock.acquire(context)
+        onDispose { WifiPerfLock.release() }
     }
 
     // Animate scanning line
