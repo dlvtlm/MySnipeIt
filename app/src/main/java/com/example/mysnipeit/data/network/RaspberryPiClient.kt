@@ -447,9 +447,18 @@ class RaspberryPiClient {
      * Send lock/unlock command via WebSocket.
      */
     fun sendLockCommand(targetId: String, action: String) {
+        // targetId is the wire track id from target_detection, verbatim. The Pi
+        // reads `target_id` (or `id`) — send BOTH (same value) so it matches
+        // whichever the lock-follow parser uses. Getting this field name right
+        // is what makes the lock hit the chosen track instead of the Pi's
+        // highest-confidence fallback.
         sendWsCommand(
             command = "select_target",
-            params = mapOf("targetId" to targetId, "action" to action),
+            params = mapOf(
+                "target_id" to targetId,
+                "id" to targetId,
+                "action" to action,
+            ),
         )
     }
 
