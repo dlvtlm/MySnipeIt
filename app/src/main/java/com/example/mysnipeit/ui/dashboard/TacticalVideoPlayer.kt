@@ -2,9 +2,6 @@ package com.example.mysnipeit.ui.dashboard
 
 import android.content.Context
 import android.util.Log
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -275,18 +273,24 @@ fun TacticalVideoPlayer(
                 key(target.id) {
                     val isLocked = lockedTargetId == target.id
                     val isSelected = target.id == selectedTargetId
+                    // Only CONFIRMED tracks are lockable — the Pi rejects a lock
+                    // on an unconfirmed/fallback track (would fall back to the
+                    // highest-confidence one). confirmed == null means the whole
+                    // message was fallback/overlay-only.
+                    val lockable = target.confirmed == true
 
                     EnhancedTargetMarker(
                         target = target,
                         isLocked = isLocked,
                         isSelected = isSelected,
+                        lockable = lockable,
                         onLockClick = {
                             if (isLocked) {
-                                // Unlock current target
+                                // Unlock current target (always allowed).
                                 lockedTargetId = null
                                 onTargetSelect("")  // Clear selection
                                 onTargetLockToggle(target.id, false)  // Send unlock command
-                            } else {
+                            } else if (lockable) {
                                 // Unlock previous target if any
                                 lockedTargetId?.let { prevTargetId ->
                                     onTargetLockToggle(prevTargetId, false)  // Send unlock command for previous
@@ -297,6 +301,7 @@ fun TacticalVideoPlayer(
                                 onTargetSelect(target.id)
                                 onTargetLockToggle(target.id, true)  // Send lock command
                             }
+                            // else: unconfirmed → ignore the lock attempt.
                         },
                         onTargetClick = {
                             // Optional: Allow clicking locked target to select/deselect
@@ -458,9 +463,13 @@ private fun EnhancedTargetMarker(
     target: DetectedTarget,
     isLocked: Boolean,
     isSelected: Boolean,
+    lockable: Boolean,
     onLockClick: () -> Unit,
     onTargetClick: () -> Unit
 ) {
+    // Unconfirmed / fallback tracks are ghosted and not lockable (the Pi only
+    // accepts a lock on confirmed tracks). A locked track always renders full.
+    val dimAlpha = if (lockable || isLocked) 1f else 0.4f
     // Tactical palette — see ui/theme/Color.kt.
     // Bone for tracked targets, copper for the selected/locked target.
     // No saturated greens or cyans (the redesign brief).
@@ -500,20 +509,14 @@ private fun EnhancedTargetMarker(
         val targetW = maxWidth  * (target.bbox.width.toFloat()  / VIDEO_WIDTH)
         val targetH = maxHeight * (target.bbox.height.toFloat() / VIDEO_HEIGHT)
 
-        // Smooth interpolation between detection updates (~167ms apart at 6Hz).
-        // Each new detection becomes the new "target" of the tween; Compose
-        // animates from the current rendered position/size to the new value over
-        // one detection interval. Net effect: the bbox glides to follow people
-        // and shrinks smoothly as they walk away, instead of snapping at 6Hz.
-        // Linear easing matches constant motion of moving targets.
-        val animSpec = tween<androidx.compose.ui.unit.Dp>(
-            durationMillis = 167,
-            easing = LinearEasing
-        )
-        val xPos      by animateDpAsState(targetValue = targetX, animationSpec = animSpec, label = "x")
-        val yPos      by animateDpAsState(targetValue = targetY, animationSpec = animSpec, label = "y")
-        val boxWidth  by animateDpAsState(targetValue = targetW, animationSpec = animSpec, label = "w")
-        val boxHeight by animateDpAsState(targetValue = targetH, animationSpec = animSpec, label = "h")
+        // No tween — snap the bbox straight to the Pi's reported position so
+        // the outdoor run sees the Pi tracker's RAW box motion with zero app
+        // interference. (Pure-visual tweening is permitted and can be added back
+        // after the outdoor run; see the detection-contract handoff.)
+        val xPos      = targetX
+        val yPos      = targetY
+        val boxWidth  = targetW
+        val boxHeight = targetH
 
         // Smart card placement: if there isn't enough room below the bbox for
         // the info card, render it ABOVE the bbox instead. Prevents the card
@@ -526,6 +529,7 @@ private fun EnhancedTargetMarker(
             modifier = Modifier
                 .offset(x = xPos, y = yPos)
                 .size(width = boxWidth, height = boxHeight)
+                .alpha(dimAlpha)
                 .clickable { onTargetClick() }
         ) {
             // Target rectangle that fills the actual bbox area
@@ -650,23 +654,36 @@ private fun EnhancedTargetMarker(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    Button(
-                        onClick = onLockClick,
-                        modifier = Modifier
-                            .height(26.dp)
-                            .widthIn(min = 70.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isLocked) Color(0xFFFFAA00)
-                                             else Color(0xFF038C16)
-                        ),
-                        shape = RoundedCornerShape(4.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-                    ) {
+                    // LOCK affordance only on confirmed (lockable) tracks, or to
+                    // release an already-locked one. Unconfirmed/fallback tracks
+                    // show WHY they can't be locked instead of a dead button.
+                    if (lockable || isLocked) {
+                        Button(
+                            onClick = onLockClick,
+                            modifier = Modifier
+                                .height(26.dp)
+                                .widthIn(min = 70.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isLocked) Color(0xFFFFAA00)
+                                                 else Color(0xFF038C16)
+                            ),
+                            shape = RoundedCornerShape(4.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = if (isLocked) "UNLOCK" else "LOCK",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Black,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    } else {
                         Text(
-                            text = if (isLocked) "UNLOCK" else "LOCK",
-                            fontSize = 10.sp,
+                            text = "UNCONFIRMED",
+                            fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.Black,
+                            color = Color(0xFFFFAA00),
                             fontFamily = FontFamily.Monospace
                         )
                     }
