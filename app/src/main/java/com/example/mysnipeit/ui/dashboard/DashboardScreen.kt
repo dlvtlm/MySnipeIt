@@ -198,12 +198,17 @@ fun DashboardScreen(
                 )
             }
 
-            // Bottom: dense 8-cell sensor strip + UNLOCK button
+            // Bottom: dense 8-cell sensor strip + UNLOCK button.
+            // Gate on selectedTargetId (the lock state), NOT on the locked
+            // target's detection being present — otherwise the button dies the
+            // instant the target leaves the frame, stranding the operator
+            // locked. Unlock acts on selectedTargetId so it works even when the
+            // detection isn't currently on screen.
             SensorStrip(
                 sensorData = sensorData,
-                hasLockedTarget = lockedTarget != null,
+                hasLockedTarget = !selectedTargetId.isNullOrEmpty(),
                 onUnlock = {
-                    lockedTarget?.let { onTargetLockToggle(it.id, false) }
+                    selectedTargetId?.let { if (it.isNotEmpty()) onTargetLockToggle(it, false) }
                     onTargetSelect("")
                 },
                 modifier = Modifier

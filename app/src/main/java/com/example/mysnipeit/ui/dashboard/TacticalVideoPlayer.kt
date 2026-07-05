@@ -99,8 +99,12 @@ fun TacticalVideoPlayer(
     var scanlinePosition by remember { mutableStateOf(0f) }
     var videoTime by remember { mutableStateOf(0L) }
 
-    // Track locked target (only one at a time)
-    var lockedTargetId by remember { mutableStateOf<String?>(null) }
+    // NOTE: lock state is NOT held locally. `selectedTargetId` (from the
+    // ViewModel) is the single source of truth for "which target is locked" —
+    // the marker, the firing card, and the bottom UNLOCK button all read it, so
+    // they can't desync. A locked target that leaves the frame keeps
+    // selectedTargetId set (so UNLOCK still works); its marker/card just aren't
+    // drawn until it returns.
 
     // Load the stream whenever it's ready — independent of the WS control
     // channel. The RTSP video is a separate connection to the same host, so a
@@ -271,8 +275,9 @@ fun TacticalVideoPlayer(
                 // recompositions. Without it, position-based identity would
                 // shuffle when the target list reorders, breaking interpolation.
                 key(target.id) {
-                    val isLocked = lockedTargetId == target.id
-                    val isSelected = target.id == selectedTargetId
+                    // Locked iff this is the selected target (single source of
+                    // truth — see the note where lockedTargetId used to live).
+                    val isLocked = target.id == selectedTargetId
                     // Only CONFIRMED tracks are lockable — the Pi rejects a lock
                     // on an unconfirmed/fallback track (would fall back to the
                     // highest-confidence one). confirmed == null means the whole
@@ -282,37 +287,25 @@ fun TacticalVideoPlayer(
                     EnhancedTargetMarker(
                         target = target,
                         isLocked = isLocked,
-                        isSelected = isSelected,
+                        isSelected = isLocked,
                         lockable = lockable,
                         onLockClick = {
                             if (isLocked) {
                                 // Unlock current target (always allowed).
-                                lockedTargetId = null
-                                onTargetSelect("")  // Clear selection
-                                onTargetLockToggle(target.id, false)  // Send unlock command
+                                onTargetSelect("")  // clears selectedTargetId
+                                onTargetLockToggle(target.id, false)  // unlock command
                             } else if (lockable) {
-                                // Unlock previous target if any
-                                lockedTargetId?.let { prevTargetId ->
-                                    onTargetLockToggle(prevTargetId, false)  // Send unlock command for previous
+                                // Switching from another locked target: release
+                                // it first so the Pi isn't left following it.
+                                selectedTargetId?.let { prev ->
+                                    if (prev != target.id) onTargetLockToggle(prev, false)
                                 }
-                                // Lock this target
-                                lockedTargetId = target.id
-                                // Immediately select and show shooting solution
                                 onTargetSelect(target.id)
-                                onTargetLockToggle(target.id, true)  // Send lock command
+                                onTargetLockToggle(target.id, true)  // lock command
                             }
                             // else: unconfirmed → ignore the lock attempt.
                         },
-                        onTargetClick = {
-                            // Optional: Allow clicking locked target to select/deselect
-                            if (isLocked) {
-                                if (isSelected) {
-                                    onTargetSelect("")  // Deselect
-                                } else {
-                                    onTargetSelect(target.id)  // Select
-                                }
-                            }
-                        }
+                        onTargetClick = {}
                     )
                 }
             }
@@ -333,20 +326,11 @@ fun TacticalVideoPlayer(
                     )
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
-                val hasLockedTarget = lockedTargetId != null
-                val hasSelectedTarget = selectedTargetId != null
+                val hasLockedTarget = !selectedTargetId.isNullOrEmpty()
 
                 Text(
-                    text = when {
-                        hasSelectedTarget -> "SOLUTION ACTIVE"
-                        hasLockedTarget -> "TARGET LOCKED"
-                        else -> "SCANNING"
-                    },
-                    color = when {
-                        hasSelectedTarget -> Color(0xFFFF6B35)
-                        hasLockedTarget -> Color(0xFFFFAA00)
-                        else -> Color(0xFF038C16)
-                    },
+                    text = if (hasLockedTarget) "TARGET LOCKED" else "SCANNING",
+                    color = if (hasLockedTarget) Color(0xFFFFAA00) else Color(0xFF038C16),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
