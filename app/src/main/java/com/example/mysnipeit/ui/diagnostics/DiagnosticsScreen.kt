@@ -45,7 +45,7 @@ import kotlinx.coroutines.launch
  *                  plus a rolling history) — replaces the old TELEMETRY
  *                  placeholder that never had an implementation.
  */
-private enum class DiagSection { CONNECTIVITY, LIVE_SENSORS, MOCK_MODE }
+private enum class DiagSection { CONNECTIVITY, LIVE_SENSORS, MOCK_MODE, STREAM }
 
 @Composable
 fun DiagnosticsScreen(
@@ -55,6 +55,8 @@ fun DiagnosticsScreen(
     acousticEvent: AcousticEvent?,
     forceMockMode: Boolean,
     onForceMockModeChange: (Boolean) -> Unit,
+    rtspForceTcp: Boolean = true,
+    onRtspForceTcpChange: (Boolean) -> Unit = {},
     isDarkTheme: Boolean = true,
     onToggleTheme: () -> Unit = {},
     viewModel: DiagnosticsViewModel = viewModel(),
@@ -95,6 +97,10 @@ fun DiagnosticsScreen(
                 DiagSection.MOCK_MODE -> MockModePane(
                     enabled = forceMockMode,
                     onToggle = onForceMockModeChange,
+                )
+                DiagSection.STREAM -> StreamTransportPane(
+                    forceTcp = rtspForceTcp,
+                    onForceTcpChange = onRtspForceTcpChange,
                 )
             }
         }
@@ -149,6 +155,12 @@ private fun DiagSidebar(
             label = "MOCK MODE",
             active = active == DiagSection.MOCK_MODE,
             onClick = { onSelect(DiagSection.MOCK_MODE) },
+        )
+        Spacer(Modifier.height(4.dp))
+        DiagNavItem(
+            label = "STREAM",
+            active = active == DiagSection.STREAM,
+            onClick = { onSelect(DiagSection.STREAM) },
         )
     }
 }
@@ -647,6 +659,98 @@ private fun MockModePane(
                     modifier = Modifier.padding(vertical = 2.dp),
                 )
             }
+        }
+    }
+}
+
+// ----------------------------------------------------------------------------
+// STREAM pane — RTSP transport A/B toggle (TCP vs UDP)
+//
+// TCP (default) matches the Pi's `-rtsp_transport tcp`: reliable on a clean
+// link but on a lossy one a lost packet blocks the whole stream until it's
+// retransmitted, so stalls accumulate latency and can wedge the session. UDP
+// drops the lost packet and keeps going — brief visual artifacts, instant
+// recovery — which is often the better trade on the flaky soft-AP link.
+// Flipping this reloads the live stream with the new transport immediately.
+// Requires the Pi/mediaMTX to accept UDP transport for the UDP setting to work.
+// ----------------------------------------------------------------------------
+@Composable
+private fun StreamTransportPane(
+    forceTcp: Boolean,
+    onForceTcpChange: (Boolean) -> Unit,
+) {
+    val t = LocalTactical.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 28.dp, vertical = 24.dp)
+            .verticalScroll(rememberScrollState()),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.Bottom,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Column {
+                Lbl(text = "LIVE VIDEO · RTSP TRANSPORT")
+                Spacer(Modifier.height(4.dp))
+                Text(
+                    text = "STREAM TRANSPORT",
+                    color = t.ink,
+                    fontSize = 22.sp,
+                    letterSpacing = 0.06.em,
+                    fontFamily = JetBrainsMono,
+                )
+            }
+            Chip(
+                text = if (forceTcp) "TCP" else "UDP",
+                tone = ChipTone.On,
+            )
+        }
+        Spacer(Modifier.height(20.dp))
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(t.panel)
+                .border(1.dp, t.line)
+                .padding(20.dp),
+        ) {
+            Lbl(text = "TRANSPORT")
+            Spacer(Modifier.height(8.dp))
+            Text(
+                text = if (forceTcp)
+                    "TCP — reliable, matches the Pi's -rtsp_transport tcp. On a lossy link a lost packet stalls the whole stream and latency accumulates."
+                else
+                    "UDP — drops lost packets and keeps going (brief artifacts, instant recovery). Better on a flaky link; needs the Pi to accept UDP.",
+                color = t.ink,
+                fontSize = 11.sp,
+                letterSpacing = 0.1.em,
+                fontFamily = JetBrainsMono,
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                MonoButton(
+                    label = "USE TCP",
+                    primary = forceTcp,
+                    enabled = !forceTcp,
+                    onClick = { onForceTcpChange(true) },
+                )
+                MonoButton(
+                    label = "USE UDP",
+                    primary = !forceTcp,
+                    enabled = forceTcp,
+                    onClick = { onForceTcpChange(false) },
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Text(
+                text = "Switching reloads the live stream with the new transport.",
+                color = t.inkMute,
+                fontSize = 10.sp,
+                letterSpacing = 0.14.em,
+                fontFamily = JetBrainsMono,
+            )
         }
     }
 }

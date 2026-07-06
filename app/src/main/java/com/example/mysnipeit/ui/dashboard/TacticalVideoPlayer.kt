@@ -2,9 +2,6 @@ package com.example.mysnipeit.ui.dashboard
 
 import android.content.Context
 import android.util.Log
-import androidx.compose.animation.core.LinearEasing
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -16,6 +13,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -33,14 +31,41 @@ import androidx.media3.common.Player
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.rtsp.RtspMediaSource
+import androidx.media3.exoplayer.source.MediaSource
 import androidx.media3.ui.PlayerView
 import com.example.mysnipeit.R
 import com.example.mysnipeit.data.ballistics.FiringSolution
 import com.example.mysnipeit.data.models.DetectedTarget
+import com.example.mysnipeit.data.network.WifiPerfLock
 import com.example.mysnipeit.ui.components.TacticalCompass
 import com.example.mysnipeit.ui.theme.*
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import com.example.mysnipeit.data.models.ConnectionState
+
+// Stall watchdog tuning. The RTSP session can wedge after a Wi-Fi blackout —
+// frames stop rendering even though the transport recovers — and ExoPlayer has
+// no native recovery for it. We poll playback progress and, if it hasn't
+// advanced for STALL_TIMEOUT_MS while we're supposed to be playing, rebuild the
+// RTSP session (what a manual back-out-and-reconnect does). A fresh session also
+// gets a keyframe within ~1 s, which resets any accumulated latency.
+private const val STALL_POLL_INTERVAL_MS = 500L
+private const val STALL_TIMEOUT_MS = 3_000L
+private const val STALL_RECONNECT_INITIAL_BACKOFF_MS = 1_000L
+private const val STALL_RECONNECT_MAX_BACKOFF_MS = 8_000L
+
+/**
+ * Build the RTSP media source. When [forceTcp] is true, forces RTP-over-TCP
+ * (matches the Pi's `-rtsp_transport tcp`, reliable but stalls on loss); when
+ * false, leaves the library default (UDP with TCP fallback), which degrades
+ * more gracefully on a lossy link. Extracted so the initial load and the stall
+ * watchdog build it identically.
+ */
+private fun buildRtspMediaSource(url: String, forceTcp: Boolean): MediaSource =
+    RtspMediaSource.Factory()
+        .apply { if (forceTcp) setForceUseRtpTcp(true) }
+        .setTimeoutMs(8000)
+        .createMediaSource(MediaItem.fromUri(url))
 
 
 // Video resolution constants (hardcoded for POC)
@@ -58,6 +83,14 @@ fun TacticalVideoPlayer(
     onTargetClick: (DetectedTarget) -> Unit = {},
     onTargetLockToggle: (String, Boolean) -> Unit = { _, _ -> },
     onTargetSelect: (String) -> Unit = {},
+    // Reports actual video health: true while frames are rendering, false when
+    // stalled / reconnecting / not streaming. Drives the dashboard's VIDEO chip
+    // from real frame flow instead of the WS control-channel state.
+    onVideoHealthChanged: (Boolean) -> Unit = {},
+    // RTSP transport: true = force TCP (default), false = UDP w/ TCP fallback.
+    // Debug toggle for A/B testing on the lossy AP link. Flipping it reloads
+    // the stream with the new transport.
+    forceTcp: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -66,26 +99,25 @@ fun TacticalVideoPlayer(
     var scanlinePosition by remember { mutableStateOf(0f) }
     var videoTime by remember { mutableStateOf(0L) }
 
-    // Track locked target (only one at a time)
-    var lockedTargetId by remember { mutableStateOf<String?>(null) }
+    // NOTE: lock state is NOT held locally. `selectedTargetId` (from the
+    // ViewModel) is the single source of truth for "which target is locked" —
+    // the marker, the firing card, and the bottom UNLOCK button all read it, so
+    // they can't desync. A locked target that leaves the frame keeps
+    // selectedTargetId set (so UNLOCK still works); its marker/card just aren't
+    // drawn until it returns.
 
-    // Load stream only when both connected AND stream is ready
-    LaunchedEffect(connectionState, streamReady, videoStreamUrl) {
-        if (connectionState == ConnectionState.CONNECTED &&
-            streamReady &&
-            videoStreamUrl != null) {
-
-            Log.d("TacticalVideoPlayer", "Stream ready signal received, loading: $videoStreamUrl")
-            // Force RTP-over-TCP to match the Pi's `-rtsp_transport tcp` and avoid
-            // UDP packet loss / firewall issues on the AP network.
-            val mediaSource = RtspMediaSource.Factory()
-                .setForceUseRtpTcp(true)
-                .setTimeoutMs(8000)
-                .createMediaSource(MediaItem.fromUri(videoStreamUrl))
-            exoPlayer.setMediaSource(mediaSource)
+    // Load the stream whenever it's ready — independent of the WS control
+    // channel. The RTSP video is a separate connection to the same host, so a
+    // transient WS blip must NOT tear it down (the WS close no longer clears
+    // rtspStreamUrl either; see RaspberryPiClient.onClose). Playback is torn
+    // down only when the stream is genuinely gone (operator left → disconnect()
+    // nulls the url).
+    LaunchedEffect(streamReady, videoStreamUrl, forceTcp) {
+        if (streamReady && videoStreamUrl != null) {
+            Log.d("TacticalVideoPlayer", "Stream ready signal received, loading: $videoStreamUrl (tcp=$forceTcp)")
+            exoPlayer.setMediaSource(buildRtspMediaSource(videoStreamUrl, forceTcp))
             exoPlayer.playWhenReady = true
             exoPlayer.prepare()
-
         } else {
             if (!streamReady) {
                 Log.d("TacticalVideoPlayer", "Waiting for stream_ready signal from server...")
@@ -93,6 +125,85 @@ fun TacticalVideoPlayer(
             exoPlayer.stop()
             exoPlayer.clearMediaItems()
         }
+    }
+
+    // Stall watchdog + auto-reconnect. Detects a wedged/frozen RTSP session
+    // (playback position not advancing while we're supposed to be playing) and
+    // rebuilds it — self-healing what previously required the operator to back
+    // out and reconnect by hand. Retries with exponential backoff while a stream
+    // is expected; resets on healthy playback. Gated on `streamReady` only, NOT
+    // the WS control channel — video is independent of a WS blip. Also emits the
+    // frame-flow health used by the dashboard VIDEO chip. Reads latest url /
+    // streamReady / callback via rememberUpdatedState so the loop never restarts.
+    val currentUrl by rememberUpdatedState(videoStreamUrl)
+    val streamExpected by rememberUpdatedState(streamReady)
+    val healthCb by rememberUpdatedState(onVideoHealthChanged)
+    val currentForceTcp by rememberUpdatedState(forceTcp)
+    LaunchedEffect(Unit) {
+        var lastSeenUrl: String? = null
+        var lastPos = 0L
+        var lastProgressAt = System.currentTimeMillis()
+        var backoffMs = STALL_RECONNECT_INITIAL_BACKOFF_MS
+        var reportedHealthy: Boolean? = null
+        // Only fires the callback when health actually flips, so the UI isn't
+        // spammed every poll.
+        fun reportHealth(healthy: Boolean) {
+            if (reportedHealthy != healthy) {
+                reportedHealthy = healthy
+                healthCb(healthy)
+            }
+        }
+        while (isActive) {
+            delay(STALL_POLL_INTERVAL_MS)
+            val url = currentUrl
+            // Not streaming (or a new stream just loaded): keep timers fresh so
+            // we never trigger a spurious reconnect during setup / teardown.
+            if (url == null || !streamExpected || url != lastSeenUrl) {
+                lastSeenUrl = url
+                lastPos = exoPlayer.currentPosition
+                lastProgressAt = System.currentTimeMillis()
+                backoffMs = STALL_RECONNECT_INITIAL_BACKOFF_MS
+                if (url == null || !streamExpected) reportHealth(false)
+                continue
+            }
+            val pos = exoPlayer.currentPosition
+            val now = System.currentTimeMillis()
+            if (pos != lastPos) {
+                // Progress → healthy. Reset the stall timer and the backoff.
+                lastPos = pos
+                lastProgressAt = now
+                backoffMs = STALL_RECONNECT_INITIAL_BACKOFF_MS
+                reportHealth(true)
+                continue
+            }
+            // Position frozen. Reconnect once it's been stuck past the timeout.
+            if (exoPlayer.playWhenReady && (now - lastProgressAt) >= STALL_TIMEOUT_MS) {
+                Log.w(
+                    "TacticalVideoPlayer",
+                    "Stall detected (${now - lastProgressAt}ms no progress) — rebuilding RTSP session"
+                )
+                reportHealth(false)
+                exoPlayer.stop()
+                exoPlayer.clearMediaItems()
+                exoPlayer.setMediaSource(buildRtspMediaSource(url, currentForceTcp))
+                exoPlayer.playWhenReady = true
+                exoPlayer.prepare()
+                // Give the new session time to come up before re-evaluating,
+                // backing off so a truly-down server isn't hammered.
+                lastPos = 0L
+                lastProgressAt = System.currentTimeMillis()
+                delay(backoffMs)
+                backoffMs = (backoffMs * 2).coerceAtMost(STALL_RECONNECT_MAX_BACKOFF_MS)
+            }
+        }
+    }
+
+    // Hold a high-performance Wi-Fi lock (+ CPU wake lock) while the live view
+    // is open, to suppress client-side Wi-Fi power-save — the interaction that
+    // produced the periodic radio blackouts freezing the stream. See WifiPerfLock.
+    DisposableEffect(Unit) {
+        WifiPerfLock.acquire(context)
+        onDispose { WifiPerfLock.release() }
     }
 
     // Animate scanning line
@@ -164,41 +275,37 @@ fun TacticalVideoPlayer(
                 // recompositions. Without it, position-based identity would
                 // shuffle when the target list reorders, breaking interpolation.
                 key(target.id) {
-                    val isLocked = lockedTargetId == target.id
-                    val isSelected = target.id == selectedTargetId
+                    // Locked iff this is the selected target (single source of
+                    // truth — see the note where lockedTargetId used to live).
+                    val isLocked = target.id == selectedTargetId
+                    // Only CONFIRMED tracks are lockable — the Pi rejects a lock
+                    // on an unconfirmed/fallback track (would fall back to the
+                    // highest-confidence one). confirmed == null means the whole
+                    // message was fallback/overlay-only.
+                    val lockable = target.confirmed == true
 
                     EnhancedTargetMarker(
                         target = target,
                         isLocked = isLocked,
-                        isSelected = isSelected,
+                        isSelected = isLocked,
+                        lockable = lockable,
                         onLockClick = {
                             if (isLocked) {
-                                // Unlock current target
-                                lockedTargetId = null
-                                onTargetSelect("")  // Clear selection
-                                onTargetLockToggle(target.id, false)  // Send unlock command
-                            } else {
-                                // Unlock previous target if any
-                                lockedTargetId?.let { prevTargetId ->
-                                    onTargetLockToggle(prevTargetId, false)  // Send unlock command for previous
+                                // Unlock current target (always allowed).
+                                onTargetSelect("")  // clears selectedTargetId
+                                onTargetLockToggle(target.id, false)  // unlock command
+                            } else if (lockable) {
+                                // Switching from another locked target: release
+                                // it first so the Pi isn't left following it.
+                                selectedTargetId?.let { prev ->
+                                    if (prev != target.id) onTargetLockToggle(prev, false)
                                 }
-                                // Lock this target
-                                lockedTargetId = target.id
-                                // Immediately select and show shooting solution
                                 onTargetSelect(target.id)
-                                onTargetLockToggle(target.id, true)  // Send lock command
+                                onTargetLockToggle(target.id, true)  // lock command
                             }
+                            // else: unconfirmed → ignore the lock attempt.
                         },
-                        onTargetClick = {
-                            // Optional: Allow clicking locked target to select/deselect
-                            if (isLocked) {
-                                if (isSelected) {
-                                    onTargetSelect("")  // Deselect
-                                } else {
-                                    onTargetSelect(target.id)  // Select
-                                }
-                            }
-                        }
+                        onTargetClick = {}
                     )
                 }
             }
@@ -219,20 +326,11 @@ fun TacticalVideoPlayer(
                     )
                     .padding(horizontal = 12.dp, vertical = 6.dp)
             ) {
-                val hasLockedTarget = lockedTargetId != null
-                val hasSelectedTarget = selectedTargetId != null
+                val hasLockedTarget = !selectedTargetId.isNullOrEmpty()
 
                 Text(
-                    text = when {
-                        hasSelectedTarget -> "SOLUTION ACTIVE"
-                        hasLockedTarget -> "TARGET LOCKED"
-                        else -> "SCANNING"
-                    },
-                    color = when {
-                        hasSelectedTarget -> Color(0xFFFF6B35)
-                        hasLockedTarget -> Color(0xFFFFAA00)
-                        else -> Color(0xFF038C16)
-                    },
+                    text = if (hasLockedTarget) "TARGET LOCKED" else "SCANNING",
+                    color = if (hasLockedTarget) Color(0xFFFFAA00) else Color(0xFF038C16),
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
@@ -349,9 +447,13 @@ private fun EnhancedTargetMarker(
     target: DetectedTarget,
     isLocked: Boolean,
     isSelected: Boolean,
+    lockable: Boolean,
     onLockClick: () -> Unit,
     onTargetClick: () -> Unit
 ) {
+    // Unconfirmed / fallback tracks are ghosted and not lockable (the Pi only
+    // accepts a lock on confirmed tracks). A locked track always renders full.
+    val dimAlpha = if (lockable || isLocked) 1f else 0.4f
     // Tactical palette — see ui/theme/Color.kt.
     // Bone for tracked targets, copper for the selected/locked target.
     // No saturated greens or cyans (the redesign brief).
@@ -391,20 +493,14 @@ private fun EnhancedTargetMarker(
         val targetW = maxWidth  * (target.bbox.width.toFloat()  / VIDEO_WIDTH)
         val targetH = maxHeight * (target.bbox.height.toFloat() / VIDEO_HEIGHT)
 
-        // Smooth interpolation between detection updates (~167ms apart at 6Hz).
-        // Each new detection becomes the new "target" of the tween; Compose
-        // animates from the current rendered position/size to the new value over
-        // one detection interval. Net effect: the bbox glides to follow people
-        // and shrinks smoothly as they walk away, instead of snapping at 6Hz.
-        // Linear easing matches constant motion of moving targets.
-        val animSpec = tween<androidx.compose.ui.unit.Dp>(
-            durationMillis = 167,
-            easing = LinearEasing
-        )
-        val xPos      by animateDpAsState(targetValue = targetX, animationSpec = animSpec, label = "x")
-        val yPos      by animateDpAsState(targetValue = targetY, animationSpec = animSpec, label = "y")
-        val boxWidth  by animateDpAsState(targetValue = targetW, animationSpec = animSpec, label = "w")
-        val boxHeight by animateDpAsState(targetValue = targetH, animationSpec = animSpec, label = "h")
+        // No tween — snap the bbox straight to the Pi's reported position so
+        // the outdoor run sees the Pi tracker's RAW box motion with zero app
+        // interference. (Pure-visual tweening is permitted and can be added back
+        // after the outdoor run; see the detection-contract handoff.)
+        val xPos      = targetX
+        val yPos      = targetY
+        val boxWidth  = targetW
+        val boxHeight = targetH
 
         // Smart card placement: if there isn't enough room below the bbox for
         // the info card, render it ABOVE the bbox instead. Prevents the card
@@ -417,6 +513,7 @@ private fun EnhancedTargetMarker(
             modifier = Modifier
                 .offset(x = xPos, y = yPos)
                 .size(width = boxWidth, height = boxHeight)
+                .alpha(dimAlpha)
                 .clickable { onTargetClick() }
         ) {
             // Target rectangle that fills the actual bbox area
@@ -541,23 +638,36 @@ private fun EnhancedTargetMarker(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
-                    Button(
-                        onClick = onLockClick,
-                        modifier = Modifier
-                            .height(26.dp)
-                            .widthIn(min = 70.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = if (isLocked) Color(0xFFFFAA00)
-                                             else Color(0xFF038C16)
-                        ),
-                        shape = RoundedCornerShape(4.dp),
-                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-                    ) {
+                    // LOCK affordance only on confirmed (lockable) tracks, or to
+                    // release an already-locked one. Unconfirmed/fallback tracks
+                    // show WHY they can't be locked instead of a dead button.
+                    if (lockable || isLocked) {
+                        Button(
+                            onClick = onLockClick,
+                            modifier = Modifier
+                                .height(26.dp)
+                                .widthIn(min = 70.dp),
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = if (isLocked) Color(0xFFFFAA00)
+                                                 else Color(0xFF038C16)
+                            ),
+                            shape = RoundedCornerShape(4.dp),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = if (isLocked) "UNLOCK" else "LOCK",
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = Color.Black,
+                                fontFamily = FontFamily.Monospace
+                            )
+                        }
+                    } else {
                         Text(
-                            text = if (isLocked) "UNLOCK" else "LOCK",
-                            fontSize = 10.sp,
+                            text = "UNCONFIRMED",
+                            fontSize = 9.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color.Black,
+                            color = Color(0xFFFFAA00),
                             fontFamily = FontFamily.Monospace
                         )
                     }

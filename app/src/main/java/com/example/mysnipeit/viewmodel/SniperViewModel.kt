@@ -176,6 +176,22 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     private val _forceMockMode = MutableStateFlow(false)
     val forceMockMode: StateFlow<Boolean> = _forceMockMode.asStateFlow()
 
+    // --- RTSP transport (debug) --------------------------------------------
+    // TCP (default) matches the Pi's `-rtsp_transport tcp` and is reliable on
+    // a clean link but stalls-and-wedges on a lossy one (a lost packet blocks
+    // the whole stream until retransmit). UDP degrades gracefully instead —
+    // brief visual artifacts, instant recovery — which is often better on the
+    // flaky soft-AP link. Exposed as a Diagnostics toggle for A/B testing with
+    // the Pi side (mediaMTX serves both). Persisted so the choice survives a
+    // restart. Requires the Pi to allow UDP transport for the UDP setting to
+    // actually stream.
+    private val _rtspForceTcp = MutableStateFlow(prefs.getBoolean("rtsp_force_tcp", true))
+    val rtspForceTcp: StateFlow<Boolean> = _rtspForceTcp.asStateFlow()
+    fun setRtspForceTcp(forceTcp: Boolean) {
+        _rtspForceTcp.value = forceTcp
+        prefs.edit().putBoolean("rtsp_force_tcp", forceTcp).apply()
+    }
+
     init {
         // Push the operator's latest GPS into the repository so the mock
         // generator always picks up a fresh anchor on its next tick.

@@ -23,7 +23,7 @@ Android tactical operator app that talks to a **Raspberry Pi 5** mounted on a re
 - **Maps:** `play-services-maps` + `maps-compose` 4.3.0, plus `play-services-location` (FusedLocationProvider). Google Maps API key injected via Secrets Gradle plugin as `${MAPS_API_KEY}` in the manifest — put it in `local.properties` as `MAPS_API_KEY=...`.
 - **Permissions runtime:** Accompanist Permissions 0.32.0. Location permission is requested manually in `MainActivity` (not via Accompanist there).
 - **JSON:** Gson 2.10.1 (kotlinx-serialization is in the catalog but not applied).
-- **Persistence:** `SharedPreferences` only ("snipeit" prefs: `dark_theme` boolean, `cartridge_id` + `rifle_id` strings for the ballistic loadout, `tripod_world_bearing_deg` float + `tripod_calibrated_at_ms` long for the operator-calibrated mic-array world-bearing offset and its capture timestamp). No Room, no DataStore.
+- **Persistence:** `SharedPreferences` only ("snipeit" prefs: `dark_theme` boolean, `cartridge_id` + `rifle_id` strings for the ballistic loadout, `tripod_world_bearing_deg` float + `tripod_calibrated_at_ms` long for the operator-calibrated mic-array world-bearing offset and its capture timestamp, `rtsp_force_tcp` boolean for the RTSP transport toggle). No Room, no DataStore.
 
 ## Repo layout
 
@@ -44,8 +44,9 @@ MySnipeIt/
 │           │   ├── location/DeviceLocationProvider.kt # FusedLocationProvider wrapper → StateFlow<LatLng?>
 │           │   ├── models/                            # All data classes (Device, SensorData, Target, ShootingSolution, SystemStatus, BallisticProfiles)
 │           │   ├── network/
-│           │   │   ├── RaspberryPiClient.kt          # WS + HTTP client to RPi; pacer + IoU tracker + EMA smoother + keepalive
+│           │   │   ├── RaspberryPiClient.kt          # WS + HTTP client to RPi; pass-through detections (Pi owns tracking) + keepalive
 │           │   │   ├── WifiBinder.kt                 # Force traffic onto WiFi (RPi AP has no internet)
+│           │   │   ├── WifiPerfLock.kt               # FULL_LOW_LATENCY WifiLock + wake lock held during the live view (suppresses WiFi power-save)
 │           │   │   └── Networktester.kt              # TCP-based ping/port-scan utility (currently unused, kept for diag)
 │           │   └── repository/SniperRepository.kt    # Thin pass-through over RaspberryPiClient
 │           └── ui/
@@ -98,7 +99,7 @@ Exposed from `SniperViewModel`:
 - `tripodWorldBearingDeg: StateFlow<Double?>` — operator-calibrated world bearing of the tripod-forward direction (= mic 0° axis world bearing). Persisted in SharedPreferences. Set via dashboard MENU → Calibrate Bearing (`CalibrateBearingDialog`) when the operator centres the camera at servo 90° — the latched compass at that moment IS this value (since the compass is on the moving head). Null when never calibrated. The saved value also **expires** after `tripodCalibrationTimeoutMs` (default 90 min, tunable) — `isCalibrationValid()` / `effectiveTripodWorldBearingDeg()` gate its USE (the value isn't wiped, just ignored once stale). When uncalibrated OR expired, audio alerts still fire but show the RELATIVE mic angle instead of a world bearing (the SLEW still works — it only needs the raw azimuth).
 - `tripodCalibratedAtMs: StateFlow<Long?>` — wall-clock timestamp of the most recent successful calibration. Drives the "Last calibrated: X ago" line in the dialog and the `CalibrationAgeChip` in the dashboard top bar (tone bands: < 30 min On, 30 min–timeout Warn, ≥ timeout Danger + "CAL EXP"). The red band coincides with `tripodCalibrationTimeoutMs` — chip-red == expired.
 - `activeAudioAlert: StateFlow<AudioAlert?>` — derived alert state for the dashboard. Built from `acousticEvent` + `effectiveTripodWorldBearingDeg()` + `uiState.selectedTargetId`. Computes the world bearing via `worldBearingFromAcousticEvent` when the calibration is valid (sets `AudioAlert.isWorldBearing=true`); otherwise the alert carries the raw mic azimuth and `isWorldBearing=false` (UI shows "REL <angle>"). Dedupe/debounce key on the **raw mic azimuth** (always present, calibration-independent): dedupes same-source events within ±15° (refreshing in place), auto-dismisses 20 s after the FIRST event of a dedupe group (`audioAlertTimeoutMs`, tunable), debounces re-fires for 30 s after explicit DISMISS, and flips `isInteractive` based on whether a target is selected (locked → passive chip, unlocked → full card). Setters: `acceptAudioAlert()` (sends the slew via raw azimuth) and `dismissAudioAlert()` (arms the debounce).
-- `detectedTargets: StateFlow<List<DetectedTarget>>` — post-pacer/tracker output, NOT raw WS payload
+- `detectedTargets: StateFlow<List<DetectedTarget>>` — the Pi's detections published verbatim (stable Pi track ids, per-detection `confirmed` flag). No app-side tracking.
 - `shootingSolution: StateFlow<ShootingSolution?>`
 - `systemStatus: StateFlow<SystemStatus>`
 - `streamReady: StateFlow<Boolean>` + `rtspStreamUrl: StateFlow<String?>`
@@ -122,29 +123,32 @@ No Nav Compose graph — `SniperApp` does a manual `when (uiState.currentScreen)
 
 ### Incoming WS message types (handled in `handleWebSocketMessage`)
 - `sensor_data` — nested `ddl_frame` with `distance` / `temperature_humidity` / `servo` / `gps` / `compass` / `wind` sub-frames. Each sub-frame has a `valid` flag (except `servo`, which has none, and `wind`, which has two: `speed_valid` and `direction_valid` independently). Dashboard hides values when `valid=false`. Wind speed + direction are shown on the bottom sensor strip; compass + servo are parsed but NOT displayed (kept for the future ballistics calculator). See `SensorData.kt` for the helper extensions (`distanceM()`, `gpsLatLon()`, `windSpeedMps()`, `windDirectionDeg()`, `compassHeadingDeg()`, etc.) — always use them, don't access nested fields directly.
-- `target_detection` — array of `{id, class, confidence, bbox{x,y,width,height}}` in pixel coords against a **1920×1080** video frame. Hardcoded resolution in `TacticalVideoPlayer.kt` (`VIDEO_WIDTH/VIDEO_HEIGHT`).
+- `target_detection` — `{timestamp_ms, detections:[{id, class, confidence, bbox{x,y,width,height}, confirmed}]}`. `bbox` is pixels against a **1920×1080** video frame (hardcoded `VIDEO_WIDTH/VIDEO_HEIGHT` in `TacticalVideoPlayer.kt`). `id` is a stable Pi track id, `confirmed` gates lockability (absent = fallback/overlay-only). Empty `detections` = clear. See "Detection pipeline" below.
 - `shooting_solution` — `{targetId, azimuth, elevation, windageAdjustment, elevationAdjustment, confidence, timestamp}`.
 - `stream_ready` — `{rtsp_port, stream_name}` → builds `rtspStreamUrl` and flips `streamReady`.
 - `system_status` — direct deserialize into `SystemStatus`.
 - `acoustic_event` — `{type, timestamp_us, azimuth_deg, confidence, peak_amplitude, duration_ms, valid}`. Single TDOA detection from the Pi's 4-mic module. `azimuth_deg` is in the **mic-array's own frame** (the array is bolted to the fixed tripod, doesn't move with the servos). World bearing is computed via `worldBearingFromAcousticEvent(event, tripodWorldBearingDeg)` where the second argument is the operator-calibrated `tripodWorldBearingDeg` (NOT the live compass — the compass is on the moving head, so it can't tell us where the mic array is pointing once the head has moved). Until calibration runs (or after it expires), the world bearing is null and the alert shows the RELATIVE mic angle instead — the alert still fires and SLEW still works (slew only needs the raw azimuth + 90° → servo).
 
-### Detection pipeline (do not break this)
+### Detection pipeline — the Pi owns tracking now
 
-Raw WS detections do NOT go straight to UI state. They flow:
+**The Pi runs a motion-compensated tracker** (Jetson Orin does stateless per-frame inference; the Pi joins detections to servo pose, associates in world-angle space so IDs survive pans, and coasts tracks ≤1.5 s through gaps). So the app is a **pass-through display** — there is deliberately NO app-side tracker/re-ID/smoothing/coasting anymore (removed on the `detection-contract` branch; it used to fight the Pi's tracker → on-screen ID churn).
 
-1. **`detectionQueue` (Channel)** — receives every burst from the Pi (Pi can dump 130 detections in 300ms).
-2. **`startDetectionPacer()` coroutine** — drains the channel to the **most recent** item only (coalesces bursts), then enforces `PACER_MIN_OUTPUT_INTERVAL_MS = 100ms` between emissions.
-3. **`matchAndSmooth()` (IoU tracker)** — greedy IoU matching (threshold `0.3`) between incoming bboxes and currently-tracked targets. Assigns stable visual IDs (`T1`, `T2`, ...) that **persist across frames**, because the Pi's own `id` swaps between people when it relabels by confidence rank.
-4. **EMA smoothing** — bbox + confidence smoothed with `alpha = 0.7` (high responsiveness, light jitter reduction).
-5. **Staleness watchdog (`startStalenessChecker`)** — clears bboxes if no WS detection received for `5s` (so the overlay doesn't freeze if the detector dies).
-6. **Tracked-target timeout** — a tracked target survives `600ms` without a match before being dropped.
-7. **WS keepalive** — pings every `20s` to prevent NAT idle timeout. Unknown message types fall through silently on the C server, so the Pi doesn't need to handle "ping".
+Flow now:
+1. `target_detection` message → parsed in `handleWebSocketMessage` and published **verbatim** to `_detectedTargets` (no channel, no pacer). Fields: `id` (**stable Pi track id** — render as-is, send back on lock), `class`, `confidence`, `bbox`, and optional `confirmed`.
+2. **`confirmed` per detection** — `true` once a track has ≥2 hits; the Pi only locks confirmed tracks. UI ghosts unconfirmed boxes (dim alpha) and shows "UNCONFIRMED" instead of a LOCK button. **`confirmed` ABSENT (parsed as `null`) = fallback/overlay-only** message (raw per-frame Orin ids) → nothing in it is lockable. Detect fallback by null, not by id values.
+3. **Empty `detections: []` clears the overlay immediately** — the Pi signals "clear all boxes" explicitly.
+4. **Staleness watchdog (`startStalenessChecker`)** — LINK-LOST BACKSTOP ONLY: wipes the overlay if NO message arrives for `STALENESS_TIMEOUT_MS = 3s`. Normal clearing is the empty array (step 3), not a timeout.
+5. **WS keepalive** — pings every `20s` to prevent NAT idle timeout. Unknown message types fall through silently on the C server.
 
-If you change any of these constants, search for the JSDoc comments above them — there's design rationale to preserve.
+**`timestamp_ms` is the Orin's monotonic clock** — NOT epoch, NOT comparable to the app's clock. The app does not read it (staleness uses the app's own receive time).
+
+**Lock sends the wire `id` verbatim** — because the app now displays the wire id, `selectedTargetId` IS the wire id, so `select_target.target_id` round-trips correctly. (Pre-`detection-contract`, the app sent its own `T1/T2` id → the Pi couldn't match it → fell back to highest-confidence = "locked the wrong target".)
+
+Bbox tweening is currently **stripped** — boxes snap straight to the Pi's reported position so the outdoor validation run sees the tracker's raw motion. Pure-visual tweening (glide between reported positions, keyed on the wire `id`, no id/lifecycle change) is permitted and can be re-added after the outdoor run.
 
 ### Mock fallback
 
-If `connectWebSocket` throws OR `connect()` itself fails, `startMockDataGeneration()` runs a 1.5s tick that fakes sensor data + 2 targets (T1 HUMAN, T2 VEHICLE) + a random shooting solution. Useful for UI dev without the Pi.
+If `connectWebSocket` throws OR `connect()` itself fails, `startMockDataGeneration()` runs a 1.5s tick that fakes sensor data + 2 targets (ids `1` HUMAN, `2` DRONE, both `confirmed=true`) + a random shooting solution. Useful for UI dev without the Pi.
 
 There's also a `MockVideoFeed` that plays `res/raw/field_video.mp4` when no RTSP is available.
 
@@ -183,6 +187,7 @@ Runtime permission flow: `MainActivity.ensureLocationPermission()` checks `ACCES
 - **`testHttpApi` and `NetworkTester` are unused** — kept around for future diagnostic UI work. The commented block in `RaspberryPiClient.connect()` shows the original gated-by-port-scan flow.
 - **`SystemStatus` from WS doesn't match `SystemStatus` data class precisely** — Gson parses field-by-field, missing fields become defaults. If you add fields, double-check both sides.
 - **Hardcoded video resolution** — 1920×1080 in `TacticalVideoPlayer.kt`. If the Pi ever changes resolution, this breaks bbox scaling.
+- **Stream resilience lives in `TacticalVideoPlayer.kt`** — the RTSP session wedges after the Pi soft-AP's periodic Wi-Fi blackouts (frames stop even though transport recovers) and ExoPlayer won't self-heal. A stall watchdog polls playback progress every 500 ms and, if it hasn't advanced for `STALL_TIMEOUT_MS` (3 s) while playing, rebuilds the RTSP source (`buildRtspMediaSource`) with exponential backoff — doing programmatically what a manual back-out-and-reconnect does, and resetting accumulated latency. RTSP transport (RTP-over-TCP vs UDP) is an operator A/B toggle — Diagnostics → STREAM, persisted as `rtsp_force_tcp` (default TCP), flipping it reloads the live stream. TCP matches the Pi's `-rtsp_transport tcp` (reliable, stalls on loss); UDP degrades gracefully on a lossy link (needs the Pi to accept UDP). `WifiPerfLock` (FULL_LOW_LATENCY WifiLock + wake lock) is held for the life of the player to fight client-side Wi-Fi power-save. **Video is decoupled from the WS control channel**: a WS close no longer clears `rtspStreamUrl`/`streamReady` (only an explicit `disconnect()` does), and the player loads/watches on `streamReady` alone — so a control-channel blip can't tear down video. The dashboard shows two separate chips: **LINK** (WS/control state) and **VIDEO** (driven by real frame flow via the player's `onVideoHealthChanged` callback, not WS state).
 - **`previousScreen` nav is a hack** — manual back-stack tracking instead of Nav Compose. Tolerable for 5 screens, would need replacing if nav gets richer.
 - **Almost no tests** — `ExampleInstrumentedTest`/`ExampleUnitTest` are unmodified AS templates. The one real suite is `TargetLocalizerTest` (pure-math geodesy for the ballistics localizer).
 - **`RigGeometry` constants reflect the real rig** — `COMPASS_ON_FIXED_BASE = false` (the compass is bolted to the moving camera arm, so its reading IS the camera's pointing direction — servo pan is NOT added on top), servo pan/tilt centered at 90°, declination 0, and `MIC_TO_SERVO_OFFSET_DEG = 90.0` (mic↔servo, used for the SLEW path; per Pi-side spec, mic 0° aligns to servo 90°). There's no compass↔mic-array constant — the acoustic-bearing path uses an operator-calibrated `tripodWorldBearingDeg` (set via MENU → Calibrate Bearing) instead of a static constant, because the compass is on the moving head while the mics are on the fixed tripod, so their relationship isn't a mechanical constant.
@@ -196,7 +201,7 @@ When you (Claude or human) make changes, update the relevant section here in the
 
 - **Add a new screen?** Update "Repo layout" + "Navigation" + the `AppScreen` enum reference.
 - **Add a new WS message type?** Update "Incoming WS message types" with the exact JSON shape.
-- **Change the detection pipeline constants?** Update the "Detection pipeline" numbered list.
+- **Change the detection flow?** Update the "Detection pipeline — the Pi owns tracking now" section.
 - **Add a new dependency?** Update "Tech stack" and note whether it's via the catalog or hardcoded.
 - **Add a new permission?** Update "Permissions (manifest)".
 - **Discover a new gotcha?** Add it to "Known gotchas". Remove gotchas as they get fixed.

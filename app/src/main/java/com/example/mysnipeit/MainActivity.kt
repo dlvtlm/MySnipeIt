@@ -147,6 +147,10 @@ fun SniperApp(viewModel: SniperViewModel) {
     // calculator can be tested without a Pi.
     val forceMockMode by viewModel.forceMockMode.collectAsStateWithLifecycle()
 
+    // RTSP transport (TCP/UDP) debug toggle — set in Diagnostics → STREAM,
+    // consumed by the dashboard's video player.
+    val rtspForceTcp by viewModel.rtspForceTcp.collectAsStateWithLifecycle()
+
     when (uiState.currentScreen) {
         AppScreen.HOME -> {
             HomeScreen(
@@ -199,6 +203,7 @@ fun SniperApp(viewModel: SniperViewModel) {
                 onAudioAlertDismiss = { viewModel.dismissAudioAlert() },
                 tripodCalibratedAtMs = tripodCalibratedAtMs,
                 tripodCalibrationTimeoutMs = viewModel.tripodCalibrationTimeoutMs,
+                rtspForceTcp = rtspForceTcp,
                 onTargetSelect = { targetId ->
                     if (targetId.isEmpty()) viewModel.deselectTarget()
                     else viewModel.selectTarget(targetId)
@@ -268,6 +273,8 @@ fun SniperApp(viewModel: SniperViewModel) {
                 acousticEvent = acousticEvent,
                 forceMockMode = forceMockMode,
                 onForceMockModeChange = { viewModel.setForceMockMode(it) },
+                rtspForceTcp = rtspForceTcp,
+                onRtspForceTcpChange = { viewModel.setRtspForceTcp(it) },
                 isDarkTheme = darkTheme,
                 onToggleTheme = { viewModel.toggleTheme() },
             )

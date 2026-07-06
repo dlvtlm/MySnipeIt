@@ -65,6 +65,7 @@ fun DashboardScreen(
     onAudioAlertDismiss: () -> Unit,
     tripodCalibratedAtMs: Long?,
     tripodCalibrationTimeoutMs: Long,
+    rtspForceTcp: Boolean = true,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onTargetSelect: (String) -> Unit = {},
@@ -77,6 +78,11 @@ fun DashboardScreen(
     val t = LocalTactical.current
     val lockedTarget = detectedTargets.firstOrNull { it.id == selectedTargetId }
 
+    // Real video health, reported by TacticalVideoPlayer from actual frame flow
+    // (true while frames render, false when stalled/reconnecting). Drives the
+    // VIDEO chip — distinct from the WS control-channel state below.
+    var videoHealthy by remember { mutableStateOf(false) }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -86,14 +92,28 @@ fun DashboardScreen(
             device = "OPERATOR · LIVE",
             onBackClick = onBackClick,
         ) {
-            // RTSP / connection chip
+            // Control-channel (WebSocket) chip — sensors + commands. NOTE this
+            // is the WS link, NOT the video; video health is the VIDEO chip.
             val (chipText, chipTone) = when (systemStatus.connectionStatus) {
-                ConnectionState.CONNECTED -> "RTSP OK" to ChipTone.On
-                ConnectionState.CONNECTING -> "CONNECTING" to ChipTone.Warn
-                ConnectionState.DISCONNECTED -> "OFFLINE" to ChipTone.Danger
-                ConnectionState.ERROR -> "ERROR" to ChipTone.Danger
+                ConnectionState.CONNECTED -> "LINK OK" to ChipTone.On
+                ConnectionState.CONNECTING -> "LINK…" to ChipTone.Warn
+                ConnectionState.DISCONNECTED -> "LINK OFF" to ChipTone.Danger
+                ConnectionState.ERROR -> "LINK ERR" to ChipTone.Danger
             }
             Chip(text = chipText, tone = chipTone)
+
+            // Video chip — driven by ACTUAL RTP frame flow, not the WS state.
+            // Shown only when a stream is expected. Green when frames are
+            // rendering; amber "RECONNECTING" when the watchdog is rebuilding a
+            // stalled session (self-healing) so the operator knows video will
+            // return on its own.
+            if (streamReady) {
+                if (videoHealthy) {
+                    Chip(text = "VIDEO OK", tone = ChipTone.On)
+                } else {
+                    Chip(text = "VIDEO…", tone = ChipTone.Warn)
+                }
+            }
 
             systemStatus.batteryLevel?.let { bat ->
                 Text(
@@ -133,6 +153,8 @@ fun DashboardScreen(
                 onTargetClick = {},
                 onTargetSelect = onTargetSelect,
                 onTargetLockToggle = onTargetLockToggle,
+                onVideoHealthChanged = { videoHealthy = it },
+                forceTcp = rtspForceTcp,
                 modifier = Modifier.fillMaxSize(),
             )
 
@@ -176,12 +198,17 @@ fun DashboardScreen(
                 )
             }
 
-            // Bottom: dense 8-cell sensor strip + UNLOCK button
+            // Bottom: dense 8-cell sensor strip + UNLOCK button.
+            // Gate on selectedTargetId (the lock state), NOT on the locked
+            // target's detection being present — otherwise the button dies the
+            // instant the target leaves the frame, stranding the operator
+            // locked. Unlock acts on selectedTargetId so it works even when the
+            // detection isn't currently on screen.
             SensorStrip(
                 sensorData = sensorData,
-                hasLockedTarget = lockedTarget != null,
+                hasLockedTarget = !selectedTargetId.isNullOrEmpty(),
                 onUnlock = {
-                    lockedTarget?.let { onTargetLockToggle(it.id, false) }
+                    selectedTargetId?.let { if (it.isNotEmpty()) onTargetLockToggle(it, false) }
                     onTargetSelect("")
                 },
                 modifier = Modifier
