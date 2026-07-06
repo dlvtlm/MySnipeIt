@@ -35,6 +35,12 @@ import com.example.mysnipeit.data.models.windSpeedMps
 import com.example.mysnipeit.ui.theme.*
 import kotlinx.coroutines.delay
 
+// Height of the bottom sensor strip. Shared with TacticalVideoPlayer (as its
+// bottomOverlayObstruction) because the strip is drawn OVER the bottom of the
+// video region — bbox info cards must keep clear of it or their LOCK button
+// ends up underneath the strip, visible but not pressable.
+private val SensorStripHeight = 68.dp
+
 /**
  * Operator HUD — redesigned to the design's "A layout + dense sensor bar"
  * variant. ALL of the data flow stays — only the chrome around the
@@ -155,6 +161,13 @@ fun DashboardScreen(
                 onTargetLockToggle = onTargetLockToggle,
                 onVideoHealthChanged = { videoHealthy = it },
                 forceTcp = rtspForceTcp,
+                // The sensor strip overlays the BOTTOM of the video region.
+                // The TopBar does NOT overlay it (it stacks above in the
+                // Column), so the top obstruction is 0 — cards are still
+                // clamped inside the video box so they can never poke up
+                // underneath/over the top bar.
+                topOverlayObstruction = 0.dp,
+                bottomOverlayObstruction = SensorStripHeight,
                 modifier = Modifier.fillMaxSize(),
             )
 
@@ -479,7 +492,7 @@ private fun SensorStrip(
     // (the whole video region) — which is exactly what the user reported.
     Row(
         modifier = modifier
-            .height(68.dp)
+            .height(SensorStripHeight)
             .background(t.panel)
             .drawBehind {
                 drawLine(
