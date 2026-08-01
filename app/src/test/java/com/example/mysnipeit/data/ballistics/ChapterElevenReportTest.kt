@@ -21,7 +21,7 @@ import kotlin.math.sqrt
  *  - [geometryValidationTable]  → Table 11.1, Chapter 10 "firing angle" stage 1.
  *    Ten cases, hand-computed angles vs. solver output, tolerance 2 deg.
  *
- *  - [sensorSensitivityTable]   → Table 11.2, Chapter 10 "firing angle" stage 2.
+ *  - [sensorSensitivityTable]   → Table 11.3, Chapter 10 "firing angle" stage 2.
  *    One baseline plus twenty single-variable perturbations, showing how
  *    each environmental input moves the solution.
  *
@@ -324,7 +324,7 @@ class ChapterElevenReportTest {
 
         println()
         println("=".repeat(126))
-        println("טבלה 11.2 — רגישות פתרון הירי לנתוני החיישנים")
+        println("טבלה 11.3 — רגישות פתרון הירי לנתוני החיישנים")
         println("קו בסיס: מטרה 300 מ' צפונה, מפלס אופקי, ללא נתוני סביבה. בכל שורה משתנה קלט אחד בלבד.")
         println("תחמושת: ${m80.displayName}   רובה: ${m24.displayName}")
         println("=".repeat(126))
