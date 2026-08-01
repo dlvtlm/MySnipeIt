@@ -79,14 +79,56 @@ mkdir -p docs/chapter11/results
 **נדרש:** Android Studio מותקן. **לא ניתן להריץ בסביבת הענן** משום שאין שם Android SDK
 והורדת Android Gradle Plugin חסומה. חייב לרוץ על המחשב שלך.
 
-**הרצה:**
+---
+
+#### ⚠️ שתי מלכודות שכדאי לקרוא לפני ההרצה הראשונה
+
+**מלכודת 1: הענף.** קובץ `ChapterElevenReportTest.kt` (בדיקות A2 ו-A3) קיים רק בענף
+`claude/chapter-11-deliverables-tgshxe`. שלוש מחלקות הבדיקה האחרות נמצאות גם ב-master.
+לפני ההרצה:
+
+```bash
+cd /path/to/MySnipeIt
+git fetch origin
+git checkout claude/chapter-11-deliverables-tgshxe
+git pull
+```
+
+**מלכודת 2, וזו החשובה: שני סוגי בדיקות שונים לגמרי.** לפרויקט שתי תיקיות בדיקה נפרדות:
+
+| תיקייה | סוג | רץ על | מה יש שם |
+|---|---|---|---|
+| `app/src/test` | בדיקות יחידה (JVM) | המחשב, **ללא מכשיר** | ✅ 51 הבדיקות שאנחנו צריכים |
+| `app/src/androidTest` | בדיקות מכשור | טלפון או אמולטור | בדיקת תבנית אחת, לא רלוונטית |
+
+בתצוגת Android של Studio שתי התיקיות נראות כמעט זהות ונבדלות רק בסוגריים:
+
+```
+com.example.mysnipeit                 ← קוד המקור
+com.example.mysnipeit (androidTest)   ← לא זה
+com.example.mysnipeit (test)          ← זה
+```
+
+**איך לזהות שהרצת את הלא נכון:** בחלון התוצאות מופיעה שורה כמו
+`Connected to process ... on device 'samsung-sm_x700'` ומספר הבדיקות הוא 1.
+חיבור למכשיר פירושו `androidTest`. בדיקות יחידה **לעולם אינן מתחברות למכשיר**.
+
+---
+
+**הרצה, הדרך המומלצת:**
 
 ```bash
 cd /path/to/MySnipeIt
 ./gradlew :app:testDebugUnitTest
 ```
 
-או ב-Android Studio: לחיצה ימנית על התיקייה `app/src/test` ואז `Run Tests in 'test'`.
+שורת הפקודה חד-משמעית ואינה תלויה באיזו תיקייה לחצת. **צפוי: 53 בדיקות** —
+`TargetLocalizerTest` 14, `FiringSolutionSolverTest` 25, `AcousticBearingTest` 12,
+`ChapterElevenReportTest` 2, `ExampleUnitTest` 1 (בדיקת תבנית, מתעלמים ממנה).
+
+**הרצה ב-Android Studio, אם מעדיפים:** לחיצה ימנית על התיקייה שכתוב לידה `(test)`
+בסוגריים, ואז `Run Tests in ...`. לחלופין, פתח את `ChapterElevenReportTest.kt` ולחץ
+על החץ הירוק ליד שם המחלקה, וזו הדרך הבטוחה ביותר שכן היא מריצה בדיוק את מה שרואים.
 
 **היכן נמצא דוח ה-HTML לאחר ההרצה:**
 
