@@ -5,6 +5,7 @@ import com.example.mysnipeit.data.models.GpsFrame
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import java.io.File
 import kotlin.math.abs
 import kotlin.math.atan2
 import kotlin.math.cos
@@ -47,6 +48,32 @@ class ChapterElevenReportTest {
     // -----------------------------------------------------------------------
     // Shared fixtures
     // -----------------------------------------------------------------------
+
+    // -----------------------------------------------------------------------
+    // Report output
+    //
+    // Tables are written to a UTF-8 file as well as stdout. The Windows
+    // console renders the JVM's UTF-8 output as mojibake unless the code
+    // page is changed, so the file is the authoritative copy to paste into
+    // the report. The test's working directory is app/, hence the "..".
+    // -----------------------------------------------------------------------
+
+    private val lines = mutableListOf<String>()
+
+    private fun out(s: String = "") {
+        lines += s
+        println(s)
+    }
+
+    private fun writeReport(fileName: String) {
+        val dir = File("../docs/chapter11/results")
+        dir.mkdirs()
+        val f = File(dir, fileName)
+        f.writeText(lines.joinToString(System.lineSeparator()), Charsets.UTF_8)
+        println("[REPORT] ${f.absolutePath}")
+        lines.clear()
+    }
+
 
     private val m80 = BallisticProfiles.cartridgeById("762x51_m80")
     private val m24 = BallisticProfiles.rifleById("m24_sws")
@@ -188,17 +215,17 @@ class ChapterElevenReportTest {
             ),
         )
 
-        println()
-        println("=".repeat(118))
-        println("טבלה 11.1 — אימות גיאומטרי של מנוע חישוב פתרון הירי")
-        println("סף המעבר לפי פרק 10, שלב 1: סטייה עד ${geometryToleranceDeg} מעלות")
-        println("=".repeat(118))
-        println(
+        out()
+        out("=".repeat(118))
+        out("טבלה 11.1 — אימות גיאומטרי של מנוע חישוב פתרון הירי")
+        out("סף המעבר לפי פרק 10, שלב 1: סטייה עד ${geometryToleranceDeg} מעלות")
+        out("=".repeat(118))
+        out(
             "%-3s | %-44s | %9s | %9s | %7s | %9s | %9s | %7s".format(
                 "#", "תרחיש", "AZ צפוי", "AZ בפועל", "סטייה", "EL צפוי", "EL בפועל", "סטייה",
             )
         )
-        println("-".repeat(118))
+        out("-".repeat(118))
 
         var worstAz = 0.0
         var worstEl = 0.0
@@ -246,7 +273,7 @@ class ChapterElevenReportTest {
                     .format(azDiff, elDiff)
             }
 
-            println(
+            out(
                 "%-3d | %-44s | %8.2f° | %8.2f° | %6.2f° | %8.2f° | %8.2f° | %6.2f°".format(
                     index + 1, c.label,
                     expectedAz, solution.azimuthDeg, azDiff,
@@ -255,12 +282,15 @@ class ChapterElevenReportTest {
             )
         }
 
-        println("-".repeat(118))
-        println("סטייה מרבית באזימוט: %.2f מעלות".format(worstAz))
-        println("סטייה מרבית בזווית המבט: %.2f מעלות".format(worstEl))
-        println("מספר מקרים שחרגו מהסף: ${failures.size} מתוך ${cases.size}")
-        println("=".repeat(118))
-        println()
+        out("-".repeat(118))
+        out("סטייה מרבית באזימוט: %.2f מעלות".format(worstAz))
+        out("סטייה מרבית בזווית המבט: %.2f מעלות".format(worstEl))
+        out("מספר מקרים שחרגו מהסף: ${failures.size} מתוך ${cases.size}")
+        out("=".repeat(118))
+        out()
+
+        // Write before asserting, so the table survives a failing run.
+        writeReport("A2_table_11_1_geometry.txt")
 
         assertTrue(
             "Cases exceeded the ${geometryToleranceDeg} deg tolerance:\n" +
@@ -322,18 +352,18 @@ class ChapterElevenReportTest {
             ),
         )
 
-        println()
-        println("=".repeat(126))
-        println("טבלה 11.3 — רגישות פתרון הירי לנתוני החיישנים")
-        println("קו בסיס: מטרה 300 מ' צפונה, מפלס אופקי, ללא נתוני סביבה. בכל שורה משתנה קלט אחד בלבד.")
-        println("תחמושת: ${m80.displayName}   רובה: ${m24.displayName}")
-        println("=".repeat(126))
-        println(
+        out()
+        out("=".repeat(126))
+        out("טבלה 11.3 — רגישות פתרון הירי לנתוני החיישנים")
+        out("קו בסיס: מטרה 300 מ' צפונה, מפלס אופקי, ללא נתוני סביבה. בכל שורה משתנה קלט אחד בלבד.")
+        out("תחמושת: ${m80.displayName}   רובה: ${m24.displayName}")
+        out("=".repeat(126))
+        out(
             "%-3s | %-18s | %-22s | %8s | %10s | %10s | %8s | %6s".format(
                 "#", "פרמטר", "ערך", "טווח", "תיקון גובה", "תיקון רוח", "זמן מעוף", "ביטחון",
             )
         )
-        println("-".repeat(126))
+        out("-".repeat(126))
 
         cases.forEachIndexed { index, c ->
             val target = localizeTarget(
@@ -360,7 +390,7 @@ class ChapterElevenReportTest {
             assertNotNull("row ${index} (${c.parameter}) produced no solution", solution)
             solution!!
 
-            println(
+            out(
                 "%-3s | %-18s | %-22s | %7.1fמ | %9.3f° | %9.3f° | %7.3fש | %5.2f".format(
                     if (index == 0) "בסיס" else index.toString(),
                     c.parameter, c.change,
@@ -373,9 +403,11 @@ class ChapterElevenReportTest {
             )
         }
 
-        println("-".repeat(126))
-        println("הערה: תיקון הרוח חיובי כאשר יש להחזיק ימינה. ערך הביטחון יורד כאשר נתוני סביבה חסרים.")
-        println("=".repeat(126))
-        println()
+        out("-".repeat(126))
+        out("הערה: תיקון הרוח חיובי כאשר יש להחזיק ימינה. ערך הביטחון יורד כאשר נתוני סביבה חסרים.")
+        out("=".repeat(126))
+        out()
+
+        writeReport("A3_table_11_3_sensitivity.txt")
     }
 }

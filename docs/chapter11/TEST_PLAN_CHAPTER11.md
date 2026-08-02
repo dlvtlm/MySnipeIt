@@ -199,6 +199,32 @@ app/build/reports/tests/testDebugUnitTest/index.html
 **שני דגלים הכרחיים.** בלי `-i` ‏Gradle בולע את הפלט הסטנדרטי ולא תראה שום טבלה,
 ובלי `--rerun` הרצה שנייה תדלג על המשימה כי היא כבר עדכנית, ושוב לא תראה דבר.
 
+#### 📄 הטבלאות נכתבות אוטומטית לקבצים, וזה העותק שממנו יש להעתיק
+
+הבדיקה כותבת בעצמה שני קבצי UTF-8, ואין צורך ב-`tee` או ב-`Tee-Object` כלל:
+
+```
+docs/chapter11/results/A2_table_11_1_geometry.txt
+docs/chapter11/results/A3_table_11_3_sensitivity.txt
+```
+
+בסוף כל בדיקה מודפסת שורה `[REPORT]` עם הנתיב המלא שנכתב.
+
+**זו הסיבה שהקבצים חשובים:** קונסולת Windows מציגה פלט UTF-8 של ה-JVM כג'יבריש
+(מחרוזות כמו `╫ÿ╫æ╫£╫ö` במקום עברית), משום שדף הקוד של המסוף אינו UTF-8. הקבצים
+נכתבים ישירות בקידוד UTF-8 ולכן הם תקינים תמיד, בלי תלות במסוף. **פתח אותם
+ב-Notepad או ב-VS Code והעתק משם לוורד.**
+
+אם בכל זאת רוצים פלט קריא במסוף עצמו:
+
+```powershell
+chcp 65001
+$OutputEncoding = [System.Text.Encoding]::UTF8
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+```
+
+ויש לוודא שגופן המסוף תומך בעברית, למשל Consolas או Cascadia Mono.
+
 **חלופה ב-Android Studio:** פתח את הקובץ, לחץ על החץ הירוק ליד `geometryValidationTable`,
 והעתק את הטבלה מחלון ה-Run.
 
