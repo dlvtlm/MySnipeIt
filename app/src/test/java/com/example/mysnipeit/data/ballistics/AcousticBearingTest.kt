@@ -26,17 +26,17 @@ class AcousticBearingTest {
     // --- Happy path ----------------------------------------------------------
 
     @Test
-    fun `tripod 0, event 0 -> world 0`() {
+    fun `tripod 0, event 0 gives world 0`() {
         assertEquals(0.0, worldBearingFromAcousticEvent(event(0f), 0.0)!!, 1e-9)
     }
 
     @Test
-    fun `tripod 0, event 42 -> world 42`() {
+    fun `tripod 0, event 42 gives world 42`() {
         assertEquals(42.0, worldBearingFromAcousticEvent(event(42f), 0.0)!!, 1e-9)
     }
 
     @Test
-    fun `tripod 90, event 30 -> world 120`() {
+    fun `tripod 90, event 30 gives world 120`() {
         assertEquals(120.0, worldBearingFromAcousticEvent(event(30f), 90.0)!!, 1e-9)
     }
 
