@@ -1,0 +1,55 @@
+/* ====================================================================
+ * A8_confidence_compare.c.txt
+ *
+ * Chapter 11 measurement A8 - reconstruct the abandoned confidence
+ * metric alongside the shipped one, on identical input.
+ *
+ * WHERE TO PASTE
+ *   File   : src/srp_phat.c
+ *   Where  : inside the function that fills srp_phat_result_t, immediately
+ *            BEFORE the confidence value is clamped to [0,1]
+ *            (around line 190 in the current source).
+ *
+ * WHAT IT PROVES
+ *   The abandoned metric was 1 - second_peak / best_peak. Because the
+ *   angular power spectrum is a smooth function sampled every 1 degree,
+ *   the "second peak" is simply the grid point next to the winner, whose
+ *   power is almost identical. The ratio therefore approaches 1 and the
+ *   confidence approaches 0 by construction, for ANY microphone count.
+ *   The shipped metric is peak-to-mean over all 181 angles, which is a
+ *   genuine baseline.
+ *
+ *   Expected: old metric 0.003 to 0.016, new metric 0.84 to 0.89.
+ *   The validity gate is confidence > 0.3, so under the old metric every
+ *   correctly localized event would have been transmitted as invalid.
+ *
+ * HOW TO RUN
+ *   make clean && make
+ *   for AZ in -60 -30 0 30 60; do
+ *       ./test_harness --azimuth $AZ --noise 0.01
+ *       sleep 1
+ *   done 2>&1 | grep CONF-COMPARE | tee A8_confidence_comparison.txt
+ *
+ * HOW TO REMOVE
+ *   git checkout -- src/srp_phat.c
+ * ==================================================================== */
+
+/* TEMPORARY - Chapter 11 measurement A8. Remove after collection. */
+{
+    float a8_best = 0.0f, a8_second = 0.0f;
+    int a8_i;
+    for (a8_i = 0; a8_i < num_angles; a8_i++) {
+        float a8_p = result->power_spectrum[a8_i];
+        if (a8_p > a8_best) {
+            a8_second = a8_best;
+            a8_best   = a8_p;
+        } else if (a8_p > a8_second) {
+            a8_second = a8_p;
+        }
+    }
+    float a8_old = (a8_best > 0.0f) ? (1.0f - a8_second / a8_best) : 0.0f;
+    fprintf(stderr,
+            "[CONF-COMPARE] az=%.1f  old=%.4f  new=%.4f\n",
+            result->azimuth_deg, a8_old, result->confidence);
+}
+/* END TEMPORARY */

@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="660" viewBox="0 0 960 660" font-family="Arial, 'Segoe UI', 'DejaVu Sans', sans-serif">
+  <defs>
+    <marker id="a1" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#b9770e"/>
+    </marker>
+    <marker id="a2" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#6c3483"/>
+    </marker>
+    <style>
+      .k  { fill:#8e44ad; }
+      .s  { fill:#1e7a46; }
+      .n  { fill:#b9770e; }
+      .b  { fill:#c0392b; }
+      .p  { fill:#5d6d7e; }
+      .mono { font-family:'Consolas','Courier New','DejaVu Sans Mono',monospace; font-size:13px; }
+    </style>
+  </defs>
+
+  <rect width="960" height="660" fill="#ffffff"/>
+
+  <!-- ============ Inbound ============ -->
+  <rect x="30" y="24" width="900" height="330" rx="8" fill="#fffdf7" stroke="#b9770e" stroke-width="1.6"/>
+
+  <text x="906" y="50" font-size="14.5" font-weight="bold" fill="#7e5109" direction="rtl" text-anchor="end">הודעת זיהוי מטרות המתקבלת מהמכשיר</text>
+  <line x1="620" y1="58" x2="700" y2="58" stroke="#b9770e" stroke-width="2" marker-end="url(#a1)"/>
+  <text x="612" y="62" font-size="11.5" fill="#7e5109" text-anchor="end">Pi</text>
+  <text x="712" y="62" font-size="11.5" fill="#7e5109">App</text>
+
+  <g class="mono">
+    <text x="54" y="88"><tspan class="p">{</tspan></text>
+    <text x="54" y="108"><tspan class="p">  </tspan><tspan class="k">"type"</tspan><tspan class="p">: </tspan><tspan class="s">"target_detection"</tspan><tspan class="p">,</tspan></text>
+    <text x="54" y="128"><tspan class="p">  </tspan><tspan class="k">"timestamp_ms"</tspan><tspan class="p">: </tspan><tspan class="n">84726351</tspan><tspan class="p">,</tspan></text>
+    <text x="54" y="148"><tspan class="p">  </tspan><tspan class="k">"detections"</tspan><tspan class="p">: [</tspan></text>
+    <text x="54" y="168"><tspan class="p">    {</tspan></text>
+    <text x="54" y="188"><tspan class="p">      </tspan><tspan class="k">"id"</tspan><tspan class="p">: </tspan><tspan class="n">7</tspan><tspan class="p">, </tspan><tspan class="k">"class"</tspan><tspan class="p">: </tspan><tspan class="s">"person"</tspan><tspan class="p">, </tspan><tspan class="k">"confidence"</tspan><tspan class="p">: </tspan><tspan class="n">0.91</tspan><tspan class="p">,</tspan></text>
+    <text x="54" y="208"><tspan class="p">      </tspan><tspan class="k">"bbox"</tspan><tspan class="p">: { </tspan><tspan class="k">"x"</tspan><tspan class="p">: </tspan><tspan class="n">812</tspan><tspan class="p">, </tspan><tspan class="k">"y"</tspan><tspan class="p">: </tspan><tspan class="n">430</tspan><tspan class="p">, </tspan><tspan class="k">"width"</tspan><tspan class="p">: </tspan><tspan class="n">96</tspan><tspan class="p">, </tspan><tspan class="k">"height"</tspan><tspan class="p">: </tspan><tspan class="n">240</tspan><tspan class="p"> },</tspan></text>
+    <text x="54" y="228"><tspan class="p">      </tspan><tspan class="k">"confirmed"</tspan><tspan class="p">: </tspan><tspan class="b">true</tspan></text>
+    <text x="54" y="248"><tspan class="p">    },</tspan></text>
+    <text x="54" y="268"><tspan class="p">    {</tspan></text>
+    <text x="54" y="288"><tspan class="p">      </tspan><tspan class="k">"id"</tspan><tspan class="p">: </tspan><tspan class="n">9</tspan><tspan class="p">, </tspan><tspan class="k">"class"</tspan><tspan class="p">: </tspan><tspan class="s">"person"</tspan><tspan class="p">, </tspan><tspan class="k">"confidence"</tspan><tspan class="p">: </tspan><tspan class="n">0.62</tspan><tspan class="p">,</tspan></text>
+    <text x="54" y="308"><tspan class="p">      </tspan><tspan class="k">"bbox"</tspan><tspan class="p">: { </tspan><tspan class="k">"x"</tspan><tspan class="p">: </tspan><tspan class="n">1290</tspan><tspan class="p">, </tspan><tspan class="k">"y"</tspan><tspan class="p">: </tspan><tspan class="n">388</tspan><tspan class="p">, </tspan><tspan class="k">"width"</tspan><tspan class="p">: </tspan><tspan class="n">74</tspan><tspan class="p">, </tspan><tspan class="k">"height"</tspan><tspan class="p">: </tspan><tspan class="n">210</tspan><tspan class="p"> },</tspan></text>
+    <text x="54" y="328"><tspan class="p">      </tspan><tspan class="k">"confirmed"</tspan><tspan class="p">: </tspan><tspan class="b">false</tspan><tspan class="p">  } ] }</tspan></text>
+  </g>
+
+  <!-- annotations -->
+  <line x1="500" y1="186" x2="614" y2="164" stroke="#c0392b" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <text x="906" y="168" font-size="11.5" fill="#c0392b" direction="rtl" text-anchor="end">מזהה מסלול יציב, מוצג כלשונו ונשלח בחזרה בעת נעילה</text>
+
+  <line x1="330" y1="226" x2="614" y2="256" stroke="#c0392b" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <text x="906" y="260" font-size="11.5" fill="#c0392b" direction="rtl" text-anchor="end">מטרה מאושרת בלבד ניתנת לנעילה</text>
+
+  <line x1="330" y1="326" x2="614" y2="308" stroke="#c0392b" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <text x="906" y="312" font-size="11.5" fill="#c0392b" direction="rtl" text-anchor="end">מטרה שטרם אושרה, מוצגת בשקיפות מופחתת</text>
+
+  <text x="54" y="348" font-size="11" fill="#7e5109" direction="rtl">תיבות תוחמות בפיקסלים ביחס למסגרת וידאו של 1920 על 1080</text>
+
+  <!-- ============ Outbound ============ -->
+  <rect x="30" y="382" width="900" height="212" rx="8" fill="#faf7fc" stroke="#6c3483" stroke-width="1.6"/>
+
+  <text x="906" y="408" font-size="14.5" font-weight="bold" fill="#512e5f" direction="rtl" text-anchor="end">פקודת נעילה הנשלחת מהאפליקציה למכשיר</text>
+  <line x1="700" y1="416" x2="620" y2="416" stroke="#6c3483" stroke-width="2" marker-end="url(#a2)"/>
+  <text x="612" y="420" font-size="11.5" fill="#512e5f" text-anchor="end">Pi</text>
+  <text x="712" y="420" font-size="11.5" fill="#512e5f">App</text>
+
+  <g class="mono">
+    <text x="54" y="446"><tspan class="p">{</tspan></text>
+    <text x="54" y="466"><tspan class="p">  </tspan><tspan class="k">"type"</tspan><tspan class="p">: </tspan><tspan class="s">"command"</tspan><tspan class="p">,</tspan></text>
+    <text x="54" y="486"><tspan class="p">  </tspan><tspan class="k">"command"</tspan><tspan class="p">: </tspan><tspan class="s">"select_target"</tspan><tspan class="p">,</tspan></text>
+    <text x="54" y="506"><tspan class="p">  </tspan><tspan class="k">"params"</tspan><tspan class="p">: { </tspan><tspan class="k">"target_id"</tspan><tspan class="p">: </tspan><tspan class="n">7</tspan><tspan class="p">, </tspan><tspan class="k">"action"</tspan><tspan class="p">: </tspan><tspan class="s">"lock"</tspan><tspan class="p"> },</tspan></text>
+    <text x="54" y="526"><tspan class="p">  </tspan><tspan class="k">"timestamp"</tspan><tspan class="p">: </tspan><tspan class="n">1751803200000</tspan></text>
+    <text x="54" y="546"><tspan class="p">}</tspan></text>
+  </g>
+
+  <line x1="392" y1="502" x2="614" y2="486" stroke="#c0392b" stroke-width="1.2" stroke-dasharray="4,3"/>
+  <text x="906" y="490" font-size="11.5" fill="#c0392b" direction="rtl" text-anchor="end">אותו מזהה שהתקבל בהודעת הזיהוי</text>
+
+  <text x="54" y="572" font-size="11" fill="#512e5f" direction="rtl">מעטפת אחידה לכל הפקודות, כולל שחרור נעילה וסיבוב המצלמה</text>
+
+  <text x="906" y="624" font-size="11.5" fill="#5d6d7e" direction="rtl" text-anchor="end">שתי ההודעות עוברות באותו חיבור WebSocket על יציאה 8555</text>
+</svg>

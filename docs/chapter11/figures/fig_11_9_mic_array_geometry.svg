@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="620" viewBox="0 0 900 620" font-family="Arial, 'Segoe UI', 'DejaVu Sans', sans-serif">
+  <defs>
+    <marker id="axis" markerWidth="9" markerHeight="7" refX="8" refY="3.5" orient="auto">
+      <path d="M0,0 L9,3.5 L0,7 Z" fill="#34495e"/>
+    </marker>
+    <marker id="bear" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto">
+      <path d="M0,0 L10,4 L0,8 Z" fill="#c0392b"/>
+    </marker>
+    <marker id="dimA" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+      <path d="M0,0 L8,4 L0,8 Z" fill="#7f8c8d"/>
+    </marker>
+  </defs>
+
+  <rect width="900" height="620" fill="#ffffff"/>
+
+  <!-- ground / mounting plane -->
+  <line x1="212" y1="420" x2="608" y2="420" stroke="#bdc3c7" stroke-width="1.2" stroke-dasharray="5,4"/>
+
+  <!-- arc of the array -->
+  <path d="M 282 420 A 128 128 0 0 1 538 420" fill="none" stroke="#34495e" stroke-width="2.4"/>
+
+  <!-- radii -->
+  <line x1="410" y1="420" x2="282" y2="420" stroke="#95a5a6" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="410" y1="420" x2="346" y2="309.1" stroke="#95a5a6" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="410" y1="420" x2="474" y2="309.1" stroke="#95a5a6" stroke-width="1" stroke-dasharray="4,3"/>
+  <line x1="410" y1="420" x2="538" y2="420" stroke="#95a5a6" stroke-width="1" stroke-dasharray="4,3"/>
+
+  <!-- axes -->
+  <line x1="410" y1="420" x2="410" y2="252" stroke="#34495e" stroke-width="1.6" marker-end="url(#axis)"/>
+  <line x1="410" y1="420" x2="640" y2="420" stroke="#34495e" stroke-width="1.6" marker-end="url(#axis)"/>
+  <text x="410" y="240" font-size="12.5" font-weight="bold" fill="#22313f" text-anchor="middle">+Y</text>
+  <text x="410" y="224" font-size="12" fill="#22313f" direction="rtl" text-anchor="middle">קדימה, ציר המצלמה</text>
+  <text x="656" y="416" font-size="12.5" font-weight="bold" fill="#22313f">+X</text>
+  <text x="656" y="434" font-size="11.5" fill="#22313f" direction="rtl">ימינה</text>
+
+  <!-- reference bearing at +45 -->
+  <line x1="410" y1="420" x2="537" y2="293" stroke="#c0392b" stroke-width="1.8" marker-end="url(#bear)"/>
+  <path d="M 410 350 A 70 70 0 0 1 459.5 370.5" fill="none" stroke="#c0392b" stroke-width="1.4"/>
+  <text x="466" y="352" font-size="12" fill="#c0392b" direction="rtl">אזימוט חיובי</text>
+  <text x="466" y="368" font-size="11" fill="#c0392b">azimuth_deg</text>
+
+  <!-- mics -->
+  <circle cx="282" cy="420" r="9" fill="#2874a6" stroke="#ffffff" stroke-width="2"/>
+  <circle cx="346" cy="309.1" r="9" fill="#2874a6" stroke="#ffffff" stroke-width="2"/>
+  <circle cx="474" cy="309.1" r="9" fill="#2874a6" stroke="#ffffff" stroke-width="2"/>
+  <circle cx="538" cy="420" r="9" fill="#2874a6" stroke="#ffffff" stroke-width="2"/>
+  <circle cx="410" cy="420" r="4" fill="#34495e"/>
+
+  <!-- mic labels -->
+  <text x="246" y="414" font-size="12.5" font-weight="bold" fill="#1b4f72" text-anchor="end">Mic 0</text>
+  <text x="246" y="431" font-size="11" fill="#5d6d7e" text-anchor="end">&#8722;90&#176;</text>
+
+  <text x="330" y="292" font-size="12.5" font-weight="bold" fill="#1b4f72" text-anchor="end">Mic 1</text>
+  <text x="330" y="309" font-size="11" fill="#5d6d7e" text-anchor="end">&#8722;30&#176;</text>
+
+  <text x="490" y="292" font-size="12.5" font-weight="bold" fill="#1b4f72">Mic 2</text>
+  <text x="490" y="309" font-size="11" fill="#5d6d7e">+30&#176;</text>
+
+  <text x="574" y="414" font-size="12.5" font-weight="bold" fill="#1b4f72">Mic 3</text>
+  <text x="574" y="431" font-size="11" fill="#5d6d7e">+90&#176;</text>
+
+  <!-- radius dimension -->
+  <line x1="410" y1="420" x2="474" y2="309.1" stroke="#7f8c8d" stroke-width="0"/>
+  <text x="452" y="378" font-size="12" font-weight="bold" fill="#7f8c8d" transform="rotate(-60,452,378)">R = 8 cm</text>
+
+  <!-- baseline dimension -->
+  <line x1="282" y1="466" x2="538" y2="466" stroke="#7f8c8d" stroke-width="1.2" marker-start="url(#dimA)" marker-end="url(#dimA)"/>
+  <line x1="282" y1="428" x2="282" y2="472" stroke="#7f8c8d" stroke-width="0.8"/>
+  <line x1="538" y1="428" x2="538" y2="472" stroke="#7f8c8d" stroke-width="0.8"/>
+  <text x="410" y="486" font-size="11.5" fill="#5d6d7e" direction="rtl" text-anchor="middle">בסיס מרבי 16 ס"מ, הפרש זמן הגעה מרבי 466 מיקרו-שניות</text>
+
+  <!-- coverage note -->
+  <text x="410" y="512" font-size="11.5" fill="#5d6d7e" direction="rtl" text-anchor="middle">כיסוי זוויתי מ-90 מעלות שמאלה עד 90 מעלות ימינה, בצעדי סריקה של מעלה אחת</text>
+
+  <!-- coordinate table -->
+  <rect x="640" y="60" width="236" height="150" rx="6" fill="#f8f9f9" stroke="#aeb6bf"/>
+  <text x="864" y="82" font-size="12.5" font-weight="bold" fill="#22313f" direction="rtl" text-anchor="end">מיקומי המיקרופונים במטרים</text>
+  <line x1="654" y1="90" x2="862" y2="90" stroke="#aeb6bf"/>
+  <text x="660" y="112" font-size="11.5" fill="#22313f">Mic 0   (&#8722;0.0800,  0.0000)</text>
+  <text x="660" y="136" font-size="11.5" fill="#22313f">Mic 1   (&#8722;0.0400,  0.0693)</text>
+  <text x="660" y="160" font-size="11.5" fill="#22313f">Mic 2   (+0.0400,  0.0693)</text>
+  <text x="660" y="184" font-size="11.5" fill="#22313f">Mic 3   (+0.0800,  0.0000)</text>
+  <text x="864" y="202" font-size="10.5" fill="#7f8c8d" direction="rtl" text-anchor="end">ראשית הצירים במרכז הקשת</text>
+
+  <!-- convention note -->
+  <rect x="24" y="60" width="252" height="106" rx="6" fill="#fdf3e3" stroke="#b9770e"/>
+  <text x="264" y="82" font-size="12.5" font-weight="bold" fill="#7e5109" direction="rtl" text-anchor="end">מוסכמת הזוויות</text>
+  <line x1="38" y1="90" x2="262" y2="90" stroke="#d5a253"/>
+  <text x="264" y="110" font-size="11.5" fill="#7e5109" direction="rtl" text-anchor="end">אפס מעלות בכיוון הקדמי</text>
+  <text x="264" y="130" font-size="11.5" fill="#7e5109" direction="rtl" text-anchor="end">זווית חיובית עם כיוון השעון</text>
+  <text x="264" y="150" font-size="11.5" fill="#7e5109" direction="rtl" text-anchor="end">הזווית יחסית למערך, לא לצפון</text>
+
+  <!-- footer note -->
+  <text x="876" y="588" font-size="11" fill="#7f8c8d" direction="rtl" text-anchor="end">המערך מקובע לחצובה ואינו נע עם זרוע המצלמה</text>
+</svg>

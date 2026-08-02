@@ -1,0 +1,60 @@
+/* ====================================================================
+ * D5_acoustic_timing.c.txt
+ *
+ * Chapter 11 measurement D5 - end-to-end latency of the acoustic module.
+ *
+ * WHY THIS IS NEEDED
+ *   The module's specification states a detect-to-emit latency below
+ *   50 ms, but there is NO timing instrumentation anywhere in the code.
+ *   The figure was derived at design time and never measured. Without
+ *   this patch there is no latency number that can honestly be reported.
+ *
+ * WHERE TO PASTE
+ *   File   : acoustic_bridge.c
+ *   Where  : inside acoustic_bridge_tick, wrapping the DSP section. The
+ *            first block goes immediately after the pending event is
+ *            claimed and its timestamp read into event_timestamp. The
+ *            second block goes immediately after ws_send_json returns.
+ *
+ * WHICH NUMBER MATTERS
+ *   "dsp" covers only the computation. "onset_to_emit" also covers the
+ *   capture-thread latency and the flag handoff to the main thread, and
+ *   that is the figure the specification is about.
+ *
+ * NOTE FOR THE REPORT
+ *   The 500 ms refractory period does NOT affect single-event latency.
+ *   It gates the NEXT trigger, not the current one. If that is raised as
+ *   an objection, this is the answer.
+ *
+ * HOW TO RUN
+ *   cd ~/SnipeIt/pi-streaming
+ *   make clean && make
+ *   sudo ./streaming_server 2>&1 | grep ACOUSTIC-TIMING | tee D5_acoustic_latency.txt
+ *
+ *   Then clap about twenty times, at least two seconds apart, since the
+ *   refractory period is half a second.
+ *
+ * HOW TO REMOVE
+ *   git checkout -- acoustic_bridge.c
+ * ==================================================================== */
+
+/* ---- TEMPORARY block 1: place right after the event is claimed ---- */
+struct timespec d5_t0, d5_t1;
+clock_gettime(CLOCK_MONOTONIC, &d5_t0);
+
+/* ... existing code: ring_buffer_snapshot, GCC-PHAT, SRP-PHAT,
+       peak amplitude and duration, the validity gate, ws_send_json ... */
+
+/* ---- TEMPORARY block 2: place right after ws_send_json returns ---- */
+clock_gettime(CLOCK_MONOTONIC, &d5_t1);
+{
+    double d5_dsp_ms = (d5_t1.tv_sec  - d5_t0.tv_sec) * 1e3
+                     + (d5_t1.tv_nsec - d5_t0.tv_nsec) / 1e6;
+    uint64_t d5_emit_us = (uint64_t)d5_t1.tv_sec * 1000000ULL
+                        + (uint64_t)d5_t1.tv_nsec / 1000ULL;
+    double d5_total_ms = (double)(d5_emit_us - event_timestamp) / 1000.0;
+    fprintf(stderr,
+            "[ACOUSTIC-TIMING] dsp=%.3f ms  onset_to_emit=%.3f ms\n",
+            d5_dsp_ms, d5_total_ms);
+}
+/* END TEMPORARY */
