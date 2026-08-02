@@ -477,8 +477,10 @@ class ChapterElevenReportTest {
                 target = target!!,
                 cartridge = m80,
                 rifle = m24,
-                temperatureC = 15f,   // ICAO standard, matches the calculator
-                humidityPct = 0f,
+                // International Standard Atmosphere, exactly as the reference
+                // calculator reports it in its footer: 59 F and 50 % RH.
+                temperatureC = 15f,
+                humidityPct = 50f,
             )
             assertNotNull("range $yd yd produced no solution", solution)
             solution!!

@@ -32,6 +32,9 @@
 | Wind Speed | **0** | ללא רוח |
 | Wind Angle | **0** | ללא רוח |
 | Correct for Atmosphere | **לא מסומן** | אטמוספירה תקנית |
+| (נגזר) Temperature | 59°F | המחשבון מדווח בכותרת התחתונה |
+| (נגזר) Relative Humidity | 50% | המחשבון מדווח בכותרת התחתונה |
+| (נגזר) Altitude | Sea Level | המחשבון מדווח בכותרת התחתונה |
 | Chart Range | **1000** | יארדים |
 | Chart Step Size | **50** | יארדים |
 
