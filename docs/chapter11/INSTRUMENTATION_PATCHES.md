@@ -38,9 +38,24 @@
 
 **התקנה:**
 
+⚠️ **הרץ את הפקודה משורש הפרויקט, כלומר מ-`C:\AndroidProjects\MySnipeIt`, ולא
+מתוך תיקיית `test-code`.** הנתיבים בפקודה יחסיים לשורש. אם אתה כבר בתוך
+`docs\chapter11\test-code`, חזור קודם:
+
 ```powershell
+cd C:\AndroidProjects\MySnipeIt
 copy docs\chapter11\test-code\LatencyProbe.kt app\src\main\java\com\example\mysnipeit\data\network\
 ```
+
+**איך לוודא שזה הצליח:** הפקודה הבאה צריכה להדפיס את שם הקובץ.
+
+```powershell
+dir app\src\main\java\com\example\mysnipeit\data\network\LatencyProbe.kt
+```
+
+**חלופה בלי שורת פקודה:** פשוט גרור את הקובץ ב-Android Studio מ-
+`docs/chapter11/test-code/` אל החבילה `data/network`, ואשר את הבקשה לעדכן
+את שורת ה-package.
 
 לאחר מכן יש להוסיף שתי שורות, כמתואר בראש `LatencyProbe.kt`. האחת ב-`RaspberryPiClient.kt`
 בענף `"sensor_data"` (סביב שורה 256), והשנייה ב-`SniperViewModel.kt` בהגדרת `firingSolution`

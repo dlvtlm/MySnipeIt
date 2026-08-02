@@ -410,4 +410,102 @@ class ChapterElevenReportTest {
 
         writeReport("A3_table_11_3_sensitivity.txt")
     }
+
+    // -----------------------------------------------------------------------
+    // Test A3-EXT — external ballistic calculator comparison
+    //
+    // Chapter 10 stage 2, component C1: "compute the required angles by
+    // hand, as is done today, and expect the deviation of the angles the
+    // function returns not to exceed five degrees."
+    //
+    // This prints the solver's output on a grid of ROUND YARD ranges, so the
+    // rows can be read straight off shooterscalculator.com's default chart
+    // without any unit conversion by hand. Every column the calculator shows
+    // has a matching column here.
+    //
+    // Sign convention: the calculator's "Elevation" is the bullet path
+    // relative to the line of sight and is NEGATIVE below it. The solver's
+    // hold-over is the correction to apply and is POSITIVE. Compare
+    // magnitudes.
+    //
+    // See docs/chapter11/CHAPTER10_TESTS.md, component C1, for the exact
+    // values to type into the calculator.
+    // -----------------------------------------------------------------------
+    @Test
+    fun externalCalculatorComparisonTable() {
+        val baseLat = 31.500000
+        val baseLon = 34.500000
+        // Sea level, not the 100 m used elsewhere in this file: the reference
+        // calculator runs standard ICAO sea-level atmosphere when "Correct for
+        // Atmosphere" is left unchecked, and matching it removes a ~1.2 % air
+        // density difference from the comparison.
+        val baseAlt = 0.0
+
+        // Round yards, because that is the grid the reference calculator
+        // produces by default. Metres are the derived value here, not the
+        // other way round.
+        val yardRanges = listOf(50, 100, 200, 300, 500, 600, 800, 1000)
+
+        out()
+        out("=".repeat(118))
+        out("טבלה A3-EXT — פלט הפותר על רשת של יארדים עגולים, להשוואה מול מחשבון בליסטי חיצוני")
+        out("מטרה צפונה, מפלס אופקי, ללא רוח, אטמוספירה תקנית (ICAO) — זהה להגדרות המחשבון")
+        out("תחמושת: ${m80.displayName}   רובה: ${m24.displayName}")
+        out("=".repeat(118))
+        out(
+            "%8s | %9s | %11s | %9s | %9s | %11s | %9s".format(
+                "טווח yd", "טווח m", "תיקון גובה", "MOA", "MIL", "נפילה inch", "זמן מעוף",
+            )
+        )
+        out("-".repeat(118))
+
+        yardRanges.forEach { yd ->
+            val meters = yd * 0.9144
+            val target = localizeTarget(
+                piGps = piGpsAt(baseLat, baseLon, baseAlt),
+                compassHeadingDeg = 0f,
+                servoHorizontalDeg = 90f,
+                servoVerticalDeg = 90f,
+                rangefinderDistanceM = meters.toFloat(),
+            )
+            assertNotNull("range $yd yd failed to localize", target)
+
+            val solution = solveFiringSolution(
+                sniperLatDeg = baseLat,
+                sniperLonDeg = baseLon,
+                sniperAltM = baseAlt,
+                target = target!!,
+                cartridge = m80,
+                rifle = m24,
+                temperatureC = 15f,   // ICAO standard, matches the calculator
+                humidityPct = 0f,
+            )
+            assertNotNull("range $yd yd produced no solution", solution)
+            solution!!
+
+            // Drop below line of sight, in inches, from the hold-over angle.
+            val dropInches =
+                solution.rangeM * kotlin.math.tan(Math.toRadians(solution.elevationDeg)) * 39.3701
+
+            out(
+                "%8d | %8.1fמ | %10.3f° | %9.2f | %9.2f | %11.2f | %8.3fש".format(
+                    yd,
+                    solution.rangeM,
+                    solution.elevationDeg,
+                    solution.elevationDeg * 60.0,
+                    solution.elevationDeg * 17.7778,
+                    dropInches,
+                    solution.timeOfFlightS,
+                )
+            )
+        }
+
+        out("-".repeat(118))
+        out("MOA = מעלות כפול 60.  MIL = מעלות כפול 17.7778.")
+        out("סימן: המחשבון מדווח Elevation שלילי מתחת לקו הראייה, הפותר מדווח תיקון חיובי. השווה גודל.")
+        out("=".repeat(118))
+        out()
+
+        writeReport("A3EXT_solver_yard_grid.txt")
+    }
 }
