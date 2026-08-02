@@ -310,6 +310,7 @@ private fun integrateTrajectory(
     airDensity: Double,
     soundSpeed: Double,
     stopAtRangeM: Double,
+    abortBelowM: Double = -50.0,
 ): TrajResult {
     val bcMetric = bcG1 * LB_PER_SQIN_TO_KG_PER_SQM
     var x = 0.0
@@ -327,8 +328,11 @@ private fun integrateTrajectory(
             return TrajResult(true, y, t, sqrt(vx * vx + vy * vy))
         }
         // Hit the ground from below the line of sight: bullets that go
-        // past −50 m below LOS are physically gone.
-        if (y < -50.0 && vy < 0.0) {
+        // this far below the TARGET are physically gone. The floor has to
+        // be relative to the target, not to the muzzle — a target 52 m
+        // downhill is legitimately reached by passing well below the
+        // muzzle's line of sight.
+        if (y < abortBelowM && vy < 0.0) {
             return TrajResult(false, y, t, sqrt(vx * vx + vy * vy))
         }
         val v = sqrt(vx * vx + vy * vy)
@@ -357,8 +361,15 @@ private data class BarrelSolution(val barrelAngleRad: Double, val tof: Double, v
 
 /**
  * Bisect on the barrel angle until the bullet passes through the target
- * point. The lower bracket starts BELOW horizontal so close-range shots
- * with a low-zero rifle (e.g. M4 + 50m zero) still converge.
+ * point.
+ *
+ * The bracket is anchored to the LOOK ANGLE rather than to horizontal.
+ * A fixed floor cannot express a downhill shot: to reach a target 10°
+ * below the shooter the barrel itself has to sit near −10°, and any
+ * bracket whose lower bound is above that converges on its own bound
+ * and returns a plausible-looking but wrong angle instead of failing.
+ * Anchoring to the look angle keeps the same ±width of search for a
+ * level, uphill or downhill shot alike.
  */
 private fun findBarrelAngle(
     targetGroundM: Double,
@@ -368,8 +379,11 @@ private fun findBarrelAngle(
     airDensity: Double,
     soundSpeed: Double,
 ): BarrelSolution? {
-    var lo = Math.toRadians(-2.0)
-    var hi = Math.toRadians(28.0)
+    val lookAngleRad = atan2(targetVerticalM, targetGroundM)
+    var lo = lookAngleRad - Math.toRadians(2.0)
+    var hi = lookAngleRad + Math.toRadians(28.0)
+    // The bullet may pass this far below the target before we call it lost.
+    val abortBelowM = targetVerticalM - 50.0
     var last: TrajResult? = null
     for (i in 0 until 25) {  // ~10⁻⁶ rad ≈ 6 µ° — way under any UI precision
         val mid = (lo + hi) / 2
@@ -381,6 +395,7 @@ private fun findBarrelAngle(
             airDensity = airDensity,
             soundSpeed = soundSpeed,
             stopAtRangeM = targetGroundM,
+            abortBelowM = abortBelowM,
         )
         if (!r.reachedRange) {
             // Couldn't reach the target — push the barrel UP and retry.

@@ -63,10 +63,34 @@ A8 (השוואת מדדי הביטחון) ו-D5 (השהיית המודול הא�
 **מיקום קבצי התוצאות:** `docs/chapter11/results/`. צור את התיקייה פעם אחת:
 
 ```bash
-mkdir -p docs/chapter11/results
+mkdir -p docs/chapter11/results          # Linux, macOS, Git Bash
+```
+
+```powershell
+mkdir docs\chapter11\results -Force      # Windows PowerShell
 ```
 
 **קונבנציית שמות:** `<מזהה>_<תיאור>.<סיומת>`, לדוגמה `A1_unit_tests.png`, `B2_latency_raw.txt`.
+
+---
+
+### ⚠️ הערה ל-Windows PowerShell
+
+הפקודות במסמך זה כתובות בתחביר bash. **שלושה הבדלים שוברים אותן ב-PowerShell:**
+
+| נושא | bash | PowerShell |
+|---|---|---|
+| הפעלת gradle | `./gradlew` | `.\gradlew` |
+| המשך שורה | `\` בסוף שורה | **בכלל לא** — כתוב הכל בשורה אחת |
+| שמירת פלט | `\| tee file.txt` | `\| Tee-Object -FilePath file.txt` |
+
+תו ה-`\` בסוף שורה הוא המלכודת המרכזית. PowerShell אינו מזהה אותו כהמשך שורה,
+מעביר אותו ל-gradle כשם משימה, ואז נכשל עם `Task '\' not found` ומיד אחריו
+`An empty pipe element is not allowed` על השורה הבאה שמתחילה ב-`|`.
+
+**הבדל רביעי שאינו קשור למערכת ההפעלה אך שובר הרצה חוזרת:** Gradle מדלג על
+משימת בדיקות שכבר רצה ולא השתנתה, ואז לא מודפס דבר. להרצה חוזרת יש להוסיף
+את הדגל `--rerun`.
 
 ---
 
@@ -158,15 +182,22 @@ app/build/reports/tests/testDebugUnitTest/index.html
 **הקוד קיים ונכתב לצורך זה:**
 `app/src/test/java/com/example/mysnipeit/data/ballistics/ChapterElevenReportTest.kt`
 
-**הרצה:**
+**הרצה. שתי הטבלאות יחד, וזו הדרך המומלצת** משום שהן רצות באותה משימה:
 
 ```bash
-cd /path/to/MySnipeIt
-./gradlew :app:testDebugUnitTest --tests '*ChapterElevenReportTest.geometryValidationTable' -i \
-    | tee docs/chapter11/results/A2_geometry_table.txt
+# Linux, macOS, Git Bash
+./gradlew :app:testDebugUnitTest --tests '*ChapterElevenReportTest' --rerun -i | tee docs/chapter11/results/A2_A3_tables.txt
 ```
 
-**דגל ה-`-i` הכרחי.** בלעדיו Gradle בולע את הפלט הסטנדרטי ולא תראה את הטבלה כלל.
+```powershell
+# Windows PowerShell — שורה אחת, בלי תו המשך
+.\gradlew :app:testDebugUnitTest --tests "*ChapterElevenReportTest" --rerun -i | Tee-Object -FilePath docs\chapter11\results\A2_A3_tables.txt
+```
+
+**להרצת טבלה 11.1 בלבד:** החלף את התבנית ב-`"*ChapterElevenReportTest.geometryValidationTable"`.
+
+**שני דגלים הכרחיים.** בלי `-i` ‏Gradle בולע את הפלט הסטנדרטי ולא תראה שום טבלה,
+ובלי `--rerun` הרצה שנייה תדלג על המשימה כי היא כבר עדכנית, ושוב לא תראה דבר.
 
 **חלופה ב-Android Studio:** פתח את הקובץ, לחץ על החץ הירוק ליד `geometryValidationTable`,
 והעתק את הטבלה מחלון ה-Run.
@@ -191,22 +222,8 @@ cd /path/to/MySnipeIt
 
 **מה נמדד:** שהתנאים הפיזיקליים משפיעים על הפתרון בכיוון ובסדר הגודל הנכונים.
 
-**הקוד קיים:** אותו קובץ, המבחן `sensorSensitivityTable`.
-
-**הרצה:**
-
-```bash
-cd /path/to/MySnipeIt
-./gradlew :app:testDebugUnitTest --tests '*ChapterElevenReportTest.sensorSensitivityTable' -i \
-    | tee docs/chapter11/results/A3_sensitivity_table.txt
-```
-
-**להרצת שתי הטבלאות יחד:**
-
-```bash
-./gradlew :app:testDebugUnitTest --tests '*ChapterElevenReportTest' -i \
-    | tee docs/chapter11/results/A2_A3_tables.txt
-```
+**הקוד קיים:** אותו קובץ, המבחן `sensorSensitivityTable`. הוא רץ יחד עם טבלה 11.1
+בפקודה שבסעיף A2, ואין צורך בהרצה נפרדת.
 
 **מה מודפס:** קו בסיס ועשרים שינויים של משתנה בודד. לכל שורה: טווח, תיקון גובה, תיקון רוח,
 זמן מעוף וערך ביטחון.
@@ -235,8 +252,17 @@ cd /path/to/MySnipeIt
 
 **הרצה:**
 
-1. פתח את מחשבון JBM Ballistics בכתובת `jbmballistics.com/ballistics/calculators/calculators.shtml`
-   ובחר `Trajectory - Simplified`.
+1. פתח מחשבון בליסטי מקוון. **הקישור שהופיע כאן קודם החזיר 404, ולהלן מספר חלופות
+   לפי סדר עדיפות. השתמש בראשון שנפתח, ורשום איזה מהם בחרת, שכן שם המקור חייב
+   להופיע בפרק:**
+
+   | מחשבון | כתובת | הערה |
+   |---|---|---|
+   | Shooters Calculator | `shooterscalculator.com/ballistic-trajectory-chart.php` | הפשוט ביותר, מקבל ישירות מקדם G1, מהירות לוע ומשקל |
+   | Hornady 4DOF | `hornady.com/4dof` | מדויק יותר אך מבוסס בעיקר על קטלוג הכדורים שלהם |
+   | JBM Ballistics | `jbmballistics.com/cgi-bin/jbmtraj-5.1.cgi` | הכתובת הישירה לטרייקטוריה, עוקפת את דף האינדקס |
+   | GunData | `gundata.org/ballistic-calculator/` | חלופה אחרונה |
+
 2. הזן את הפרמטרים של 7.62×51 M80 כפי שהם מוגדרים ב-`BallisticProfiles.kt`:
    מקדם בליסטי G1 של 0.395, משקל קליע 147 גרעין (9.53 גרם), מהירות לוע 838 מטר לשנייה,
    גובה כוונת 38 מילימטר, אפס ב-100 מטר.
