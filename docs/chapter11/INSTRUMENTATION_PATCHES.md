@@ -57,9 +57,29 @@ dir app\src\main\java\com\example\mysnipeit\data\network\LatencyProbe.kt
 `docs/chapter11/test-code/` אל החבילה `data/network`, ואשר את הבקשה לעדכן
 את שורת ה-package.
 
-לאחר מכן יש להוסיף שתי שורות, כמתואר בראש `LatencyProbe.kt`. האחת ב-`RaspberryPiClient.kt`
-בענף `"sensor_data"` (סביב שורה 256), והשנייה ב-`SniperViewModel.kt` בהגדרת `firingSolution`
-(סביב שורה 339).
+לאחר מכן יש להוסיף **שלוש שורות**, כמתואר בראש `LatencyProbe.kt`.
+
+| # | קובץ | מיקום | הערה |
+|---|---|---|---|
+| 1 | `RaspberryPiClient.kt` | ענף `"sensor_data"`, סביב שורה 256 | הנתיב מול המכשיר האמיתי |
+| 2 | `RaspberryPiClient.kt` | בתוך `startMockDataGeneration`, מיד לפני `_sensorData.value =`, סביב שורה 490 | **הנתיב שבדיקת B2 באמת רצה עליו** |
+| 3 | `SniperViewModel.kt` | בהגדרת `firingSolution`, סביב שורה 339 | סוף המדידה |
+
+### 🔴 אם ה-logcat ריק לגמרי — כמעט תמיד זו השורה השנייה
+
+מוקדם יותר המדריך הזה ציין שתי שורות בלבד והשמיט את השורה במחולל הדמה. זו טעות,
+וזו בדיוק הסיבה ש-`tag:SnipeItLatency` לא מחזיר כלום ב-MOCK MODE.
+
+מחולל הדמה **אינו עובר דרך `handleWebSocketMessage`**. הוא מציב ערך ישירות
+ל-`_sensorData.value` בשורה 490, ולכן הענף `"sensor_data"` בשורה 256 לעולם
+אינו נקרא במצב הדמה. התוצאה היא ש-`markSensorParsed` לא רץ אף פעם,
+`sensorParsedAtNs` נשאר אפס, ו-`markSolutionEmitted` יוצא מוקדם בלי לכתוב דבר.
+
+הגרסה המעודכנת של `LatencyProbe.kt` **מזהה את המצב הזה וכותבת אזהרה מפורשת**
+תחת אותו תג, במקום להישאר שקטה. אם אחרי העדכון אתה רואה שורת `W` שמסבירה
+שחסרה קריאה ל-`markSensorParsed`, זה בדיוק המצב הזה, והתיקון הוא הוספת שורה 2.
+
+**חשוב:** משכת מחדש את `LatencyProbe.kt` מהענף, ולכן יש להעתיק אותו שוב לפרויקט.
 
 ### 🟠 אם הפקודה `adb` אינה מזוהה
 
