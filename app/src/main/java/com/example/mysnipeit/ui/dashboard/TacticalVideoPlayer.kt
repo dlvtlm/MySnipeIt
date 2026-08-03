@@ -37,7 +37,6 @@ import com.example.mysnipeit.R
 import com.example.mysnipeit.data.ballistics.FiringSolution
 import com.example.mysnipeit.data.models.DetectedTarget
 import com.example.mysnipeit.data.network.WifiPerfLock
-import com.example.mysnipeit.ui.components.TacticalCompass
 import com.example.mysnipeit.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -91,7 +90,6 @@ fun TacticalVideoPlayer(
     // Debug toggle for A/B testing on the lossy AP link. Flipping it reloads
     // the stream with the new transport.
     forceTcp: Boolean = true,
-    hideCompass: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -336,25 +334,6 @@ fun TacticalVideoPlayer(
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
                 )
-            }
-
-            //   3D Tactical Compass (bottom-left). Visualises where the
-            //   target sits relative to the sniper: arrow rotated by the
-            //   true-north bearing, EL shows the look angle above the
-            //   sniper's horizon (positive = uphill, negative = downhill).
-            //   This is NOT the hold-over — the hold is on the firing card.
-            if (firingSolution != null && selectedTargetId != null && !hideCompass) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(16.dp)
-                ) {
-                    TacticalCompass(
-                        azimuth = firingSolution.azimuthDeg,
-                        elevation = firingSolution.lookAngleDeg,
-                        confidence = firingSolution.confidence
-                    )
-                }
             }
             } // end overlays Box
         } // end aspect-ratio video Box

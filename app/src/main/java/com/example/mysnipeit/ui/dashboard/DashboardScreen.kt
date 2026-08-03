@@ -66,7 +66,6 @@ fun DashboardScreen(
     tripodCalibratedAtMs: Long?,
     tripodCalibrationTimeoutMs: Long,
     rtspForceTcp: Boolean = true,
-    isMockMode: Boolean = false,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onTargetSelect: (String) -> Unit = {},
@@ -156,7 +155,6 @@ fun DashboardScreen(
                 onTargetLockToggle = onTargetLockToggle,
                 onVideoHealthChanged = { videoHealthy = it },
                 forceTcp = rtspForceTcp,
-                hideCompass = isMockMode,
                 modifier = Modifier.fillMaxSize(),
             )
 

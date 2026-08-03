@@ -204,7 +204,6 @@ fun SniperApp(viewModel: SniperViewModel) {
                 tripodCalibratedAtMs = tripodCalibratedAtMs,
                 tripodCalibrationTimeoutMs = viewModel.tripodCalibrationTimeoutMs,
                 rtspForceTcp = rtspForceTcp,
-                isMockMode = forceMockMode,
                 onTargetSelect = { targetId ->
                     if (targetId.isEmpty()) viewModel.deselectTarget()
                     else viewModel.selectTarget(targetId)
