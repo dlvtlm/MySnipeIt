@@ -124,8 +124,10 @@ class FiringSolutionSolverTest {
         // .308 M80 at 100 m: ~0.13 s TOF in standard atmosphere.
         val s = solve(targetDueNorth(100.0))!!
         assertEquals(0.13, s.timeOfFlightS, 0.05)
-        // Impact velocity is barely below muzzle (~810 m/s vs 838 m/s).
-        assertTrue("v=${s.impactVelocityMps}", s.impactVelocityMps in 780.0..835.0)
+// Impact velocity at 100 m is ~763 m/s per the reference calculator.
+// The earlier 780..835 range was fitted to the pre-fix drag table's own
+// output, not to an outside source, so it documented the defect.
+        assertTrue("v=${s.impactVelocityMps}", s.impactVelocityMps in 740.0..790.0)
     }
 
     @Test
@@ -321,9 +323,9 @@ class FiringSolutionSolverTest {
 
     @Test
     fun `g1 drag clamps outside the table`() {
-        // Below 0 and above 4.0 should return the endpoint values exactly.
+        // Below 0 and above 5.0 should return the endpoint values exactly.
         assertEquals(g1Cd(0.0), g1Cd(-5.0), 1e-9)
-        assertEquals(g1Cd(4.0), g1Cd(10.0), 1e-9)
+        assertEquals(g1Cd(5.0), g1Cd(10.0), 1e-9)
     }
 
     @Test
