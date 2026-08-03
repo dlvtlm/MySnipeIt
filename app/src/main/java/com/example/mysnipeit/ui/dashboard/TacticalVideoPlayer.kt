@@ -622,7 +622,9 @@ private fun EnhancedTargetMarker(
                         color = markerColor,
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
                     )
 
                     Text(
@@ -633,7 +635,9 @@ private fun EnhancedTargetMarker(
                             else                     -> Color(0xFFFF4444)
                         },
                         fontSize = 9.sp,
-                        fontFamily = FontFamily.Monospace
+                        fontFamily = FontFamily.Monospace,
+                        maxLines = 1,
+                        softWrap = false
                     )
 
                     Spacer(modifier = Modifier.height(4.dp))

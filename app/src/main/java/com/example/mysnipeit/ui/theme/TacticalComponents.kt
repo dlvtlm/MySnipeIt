@@ -83,6 +83,8 @@ fun Chip(
             fontSize = 10.sp,
             letterSpacing = 0.14.em,
             fontFamily = JetBrainsMono,
+            maxLines = 1,
+            softWrap = false,
         )
     }
 }
