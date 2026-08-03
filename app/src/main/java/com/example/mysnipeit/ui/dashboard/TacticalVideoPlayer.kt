@@ -91,6 +91,7 @@ fun TacticalVideoPlayer(
     // Debug toggle for A/B testing on the lossy AP link. Flipping it reloads
     // the stream with the new transport.
     forceTcp: Boolean = true,
+    hideCompass: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -342,7 +343,7 @@ fun TacticalVideoPlayer(
             //   true-north bearing, EL shows the look angle above the
             //   sniper's horizon (positive = uphill, negative = downhill).
             //   This is NOT the hold-over — the hold is on the firing card.
-            if (firingSolution != null && selectedTargetId != null) {
+            if (firingSolution != null && selectedTargetId != null && !hideCompass) {
                 Box(
                     modifier = Modifier
                         .align(Alignment.BottomStart)
@@ -622,9 +623,8 @@ private fun EnhancedTargetMarker(
                         color = markerColor,
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        softWrap = false
+                        fontWeight = FontWeight.Bold
+
                     )
 
                     Text(
@@ -635,9 +635,8 @@ private fun EnhancedTargetMarker(
                             else                     -> Color(0xFFFF4444)
                         },
                         fontSize = 9.sp,
-                        fontFamily = FontFamily.Monospace,
-                        maxLines = 1,
-                        softWrap = false
+                        fontFamily = FontFamily.Monospace
+
                     )
 
                     Spacer(modifier = Modifier.height(4.dp))

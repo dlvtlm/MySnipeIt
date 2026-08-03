@@ -66,6 +66,7 @@ fun DashboardScreen(
     tripodCalibratedAtMs: Long?,
     tripodCalibrationTimeoutMs: Long,
     rtspForceTcp: Boolean = true,
+    isMockMode: Boolean = false,
     onConnectClick: () -> Unit,
     onDisconnectClick: () -> Unit,
     onTargetSelect: (String) -> Unit = {},
@@ -155,6 +156,7 @@ fun DashboardScreen(
                 onTargetLockToggle = onTargetLockToggle,
                 onVideoHealthChanged = { videoHealthy = it },
                 forceTcp = rtspForceTcp,
+                hideCompass = isMockMode,
                 modifier = Modifier.fillMaxSize(),
             )
 
@@ -399,7 +401,11 @@ private fun FiringSolutionCard(
             horizontalArrangement = Arrangement.SpaceBetween,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Lbl(text = "FIRING SOLUTION · $targetId")
+            Lbl(
+                text = "FIRING SOLUTION · $targetId",
+                modifier = Modifier.weight(1f, fill = false),
+            )
+            Spacer(Modifier.width(8.dp))
             Chip(text = "LOCKED", tone = ChipTone.Warn)
         }
         Column(modifier = Modifier.padding(16.dp)) {
