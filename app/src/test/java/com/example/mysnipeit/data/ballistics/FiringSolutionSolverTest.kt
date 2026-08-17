@@ -124,8 +124,10 @@ class FiringSolutionSolverTest {
         // .308 M80 at 100 m: ~0.13 s TOF in standard atmosphere.
         val s = solve(targetDueNorth(100.0))!!
         assertEquals(0.13, s.timeOfFlightS, 0.05)
-        // Impact velocity is barely below muzzle (~810 m/s vs 838 m/s).
-        assertTrue("v=${s.impactVelocityMps}", s.impactVelocityMps in 780.0..835.0)
+// Impact velocity at 100 m is ~763 m/s per the reference calculator.
+// The earlier 780..835 range was fitted to the pre-fix drag table's own
+// output, not to an outside source, so it documented the defect.
+        assertTrue("v=${s.impactVelocityMps}", s.impactVelocityMps in 740.0..790.0)
     }
 
     @Test
@@ -191,6 +193,54 @@ class FiringSolutionSolverTest {
         val vert = slant * Math.sin(angleRad)
         val inclined = solve(targetDueNorth(horiz).copy(altitudeM = sniperAlt + vert))!!.elevationDeg
         assertTrue("inclined hold $inclined should be less than flat hold $flat", inclined < flat)
+    }
+
+    // --- Downhill shots -------------------------------------------------------
+    // Regression cover for a defect found while building the Chapter 11
+    // sensitivity table: the barrel-angle bisection used to search a fixed
+    // [−2°, +28°] bracket. A target more than ~2° below the shooter needs a
+    // barrel angle outside that bracket, so the search saturated on its own
+    // lower bound and returned a wrong hold-over WITHOUT reporting failure.
+    // The existing look-angle test did not catch it because the look angle is
+    // computed before the bisection runs.
+
+    @Test
+    fun `downhill shot holds near the level-shot value, not many degrees`() {
+        // 300 m slant, 10° down → 295.4 m horizontal, 52.1 m below.
+        val slant = 300.0
+        val angleRad = Math.toRadians(10.0)
+        val horiz = slant * Math.cos(angleRad)
+        val vert = slant * Math.sin(angleRad)
+        val down = solve(targetDueNorth(horiz).copy(altitudeM = sniperAlt - vert))
+        assertNotNull("downhill target should be solvable", down)
+        val hold = down!!.elevationDeg
+        // Before the fix this returned ≈ 7.9°. Hold-over at this range is a
+        // fraction of a degree whether the shot is level, uphill or downhill.
+        assertTrue("downhill hold-over $hold is implausibly large", abs(hold) < 0.5)
+    }
+
+    @Test
+    fun `steep downhill beyond the old bracket still solves`() {
+        // 500 m horizontal, 100 m below → look angle ≈ −11.3°, well outside
+        // the old lower bound, and 100 m below the old absolute −50 m floor.
+        val down = solve(targetDueNorth(500.0).copy(altitudeM = sniperAlt - 100.0))
+        assertNotNull("steep downhill target should be solvable", down)
+        val hold = down!!.elevationDeg
+        assertTrue("steep downhill hold-over $hold is implausibly large", abs(hold) < 1.0)
+    }
+
+    @Test
+    fun `uphill and downhill at equal inclination need comparable hold-over`() {
+        val slant = 400.0
+        val angleRad = Math.toRadians(15.0)
+        val horiz = slant * Math.cos(angleRad)
+        val vert = slant * Math.sin(angleRad)
+        val up = solve(targetDueNorth(horiz).copy(altitudeM = sniperAlt + vert))!!.elevationDeg
+        val down = solve(targetDueNorth(horiz).copy(altitudeM = sniperAlt - vert))!!.elevationDeg
+        // Gravity acts vertically, so what governs the hold is the horizontal
+        // leg, which is identical here. The two must be close; they are not
+        // required to be exactly equal.
+        assertEquals("uphill $up and downhill $down should be comparable", up, down, 0.15)
     }
 
     // --- Wind drift -----------------------------------------------------------
@@ -273,9 +323,9 @@ class FiringSolutionSolverTest {
 
     @Test
     fun `g1 drag clamps outside the table`() {
-        // Below 0 and above 4.0 should return the endpoint values exactly.
+        // Below 0 and above 5.0 should return the endpoint values exactly.
         assertEquals(g1Cd(0.0), g1Cd(-5.0), 1e-9)
-        assertEquals(g1Cd(4.0), g1Cd(10.0), 1e-9)
+        assertEquals(g1Cd(5.0), g1Cd(10.0), 1e-9)
     }
 
     @Test

@@ -5,7 +5,7 @@ import android.util.Log
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -19,9 +19,14 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathEffect
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -37,7 +42,6 @@ import com.example.mysnipeit.R
 import com.example.mysnipeit.data.ballistics.FiringSolution
 import com.example.mysnipeit.data.models.DetectedTarget
 import com.example.mysnipeit.data.network.WifiPerfLock
-import com.example.mysnipeit.ui.components.TacticalCompass
 import com.example.mysnipeit.ui.theme.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -91,6 +95,12 @@ fun TacticalVideoPlayer(
     // Debug toggle for A/B testing on the lossy AP link. Flipping it reloads
     // the stream with the new transport.
     forceTcp: Boolean = true,
+    // Heights of any HUD bars the parent draws OVER this player's edges (the
+    // dashboard's bottom sensor strip; the top is 0 today since the TopBar
+    // stacks above the video region instead of overlaying it). Used to keep
+    // each bbox info card — and its LOCK button — out of the covered zones.
+    topOverlayObstruction: Dp = 0.dp,
+    bottomOverlayObstruction: Dp = 0.dp,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -232,12 +242,22 @@ fun TacticalVideoPlayer(
         }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black),
         contentAlignment = Alignment.Center
     ) {
+        // How far the parent's HUD bars reach INTO the centered 16:9 video
+        // box. The video is centered in this region, so letterbox slack above/
+        // below it absorbs part of each obstruction before the video itself is
+        // covered. Whatever remains is the zone info cards must avoid (the
+        // bars are drawn over the video, z-above us).
+        val videoBoxHeight = minOf(maxWidth * (VIDEO_HEIGHT / VIDEO_WIDTH), maxHeight)
+        val letterbox = (maxHeight - videoBoxHeight) / 2
+        val topOverlayIntrusion = (topOverlayObstruction - letterbox).coerceAtLeast(0.dp)
+        val bottomOverlayIntrusion = (bottomOverlayObstruction - letterbox).coerceAtLeast(0.dp)
+
         // Constrain the video + overlay region to the source 16:9 aspect ratio.
         // This keeps detection bbox coordinates aligned with the rendered video
         // even on tablets that aren't exactly 16:9 (no pillarbox/letterbox math
@@ -289,6 +309,8 @@ fun TacticalVideoPlayer(
                         isLocked = isLocked,
                         isSelected = isLocked,
                         lockable = lockable,
+                        topOverlayIntrusion = topOverlayIntrusion,
+                        bottomOverlayIntrusion = bottomOverlayIntrusion,
                         onLockClick = {
                             if (isLocked) {
                                 // Unlock current target (always allowed).
@@ -335,25 +357,6 @@ fun TacticalVideoPlayer(
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace
                 )
-            }
-
-            //   3D Tactical Compass (bottom-left). Visualises where the
-            //   target sits relative to the sniper: arrow rotated by the
-            //   true-north bearing, EL shows the look angle above the
-            //   sniper's horizon (positive = uphill, negative = downhill).
-            //   This is NOT the hold-over — the hold is on the firing card.
-            if (firingSolution != null && selectedTargetId != null) {
-                Box(
-                    modifier = Modifier
-                        .align(Alignment.BottomStart)
-                        .padding(16.dp)
-                ) {
-                    TacticalCompass(
-                        azimuth = firingSolution.azimuthDeg,
-                        elevation = firingSolution.lookAngleDeg,
-                        confidence = firingSolution.confidence
-                    )
-                }
             }
             } // end overlays Box
         } // end aspect-ratio video Box
@@ -442,12 +445,22 @@ private fun SimulatedTargets(videoTime: Long): List<DetectedTarget> {
     return targets
 }
 
+// Minimum touch-target size for a bbox. A person 150m+ out can shrink to a
+// ~30px box — well below a comfortable fingertip. The gesture area expands
+// symmetrically around the drawn bbox up to at least this square.
+private val MIN_TAP_TARGET = 48.dp
+
 @Composable
 private fun EnhancedTargetMarker(
     target: DetectedTarget,
     isLocked: Boolean,
     isSelected: Boolean,
     lockable: Boolean,
+    // How far the dashboard's HUD bars cover the top/bottom of the video box
+    // (see TacticalVideoPlayer). The info card is kept out of both zones so
+    // its LOCK button always stays pressable.
+    topOverlayIntrusion: Dp,
+    bottomOverlayIntrusion: Dp,
     onLockClick: () -> Unit,
     onTargetClick: () -> Unit
 ) {
@@ -502,22 +515,40 @@ private fun EnhancedTargetMarker(
         val boxWidth  = targetW
         val boxHeight = targetH
 
-        // Smart card placement: if there isn't enough room below the bbox for
-        // the info card, render it ABOVE the bbox instead. Prevents the card
-        // from being pushed off the bottom of the video for tall bboxes (e.g.
-        // a person filling most of the frame).
-        val cardHeight = 72.dp
-        val placeCardAbove = (targetY + targetH + cardHeight + 6.dp) > maxHeight
+        // Gesture area: the bbox itself, expanded to at least MIN_TAP_TARGET
+        // per side so distant (tiny) targets stay pressable.
+        //   double-tap → lock / unlock: same action as the info card's LOCK
+        //                button (onLockClick already guards on `lockable`).
+        //                Exists because the card/button can be covered by a
+        //                HUD bar or be fiddly to hit on a moving target.
+        //   single-tap → onTargetClick (currently a no-op at the call site,
+        //                kept for parity with the previous clickable).
+        // rememberUpdatedState keeps the handlers fresh inside pointerInput,
+        // which is keyed on Unit and would otherwise capture stale closures.
+        val hitW = maxOf(boxWidth, MIN_TAP_TARGET)
+        val hitH = maxOf(boxHeight, MIN_TAP_TARGET)
+        val currentOnLockClick by rememberUpdatedState(onLockClick)
+        val currentOnTargetClick by rememberUpdatedState(onTargetClick)
 
         Box(
             modifier = Modifier
-                .offset(x = xPos, y = yPos)
-                .size(width = boxWidth, height = boxHeight)
+                .offset(
+                    x = xPos - (hitW - boxWidth) / 2,
+                    y = yPos - (hitH - boxHeight) / 2,
+                )
+                .size(width = hitW, height = hitH)
                 .alpha(dimAlpha)
-                .clickable { onTargetClick() }
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onDoubleTap = { currentOnLockClick() },
+                        onTap = { currentOnTargetClick() },
+                    )
+                },
+            contentAlignment = Alignment.Center
         ) {
-            // Target rectangle that fills the actual bbox area
-            Canvas(modifier = Modifier.fillMaxSize()) {
+            // Target rectangle drawn at the ACTUAL bbox size (the parent hit
+            // Box may be larger for small targets — drawing stays truthful).
+            Canvas(modifier = Modifier.size(width = boxWidth, height = boxHeight)) {
                 val w = size.width
                 val h = size.height
                 val strokeWidth = when {
@@ -598,79 +629,102 @@ private fun EnhancedTargetMarker(
                 }
             }
 
-            // Minimal info card: just "T1 | HUMAN" + LOCK button. Placed below
-            // the bbox by default, or above it when the bbox is near the bottom
-            // of the video (so the card doesn't get pushed off-screen).
-            Card(
-                modifier = Modifier
-                    .align(Alignment.TopCenter)
-                    .offset(
-                        y = if (placeCardAbove) -(cardHeight + 6.dp)
-                            else boxHeight + 6.dp
-                    ),
-                colors = CardDefaults.cardColors(
-                    containerColor = Color.Black.copy(alpha = 0.85f)
-                ),
-                shape = RoundedCornerShape(6.dp)
+        }
+
+        // Minimal info card: "T1 | HUMAN" + LOCK button (or UNCONFIRMED).
+        // Placement keeps the card — and its button — fully visible:
+        //   - below the bbox by default, flipped ABOVE when "below" would run
+        //     into the sensor strip's covered zone (bottomOverlayIntrusion)
+        //     or off the bottom of the video;
+        //   - when flipped above, clamped below topOverlayIntrusion so it
+        //     can't disappear under a top bar either;
+        //   - clamped horizontally into the video box, so edge targets don't
+        //     squeeze the card into wrapping its text.
+        // The card is a SIBLING of the bbox Box (not a child), so its size is
+        // unconstrained by narrow bboxes. Its real size is measured via
+        // onSizeChanged; it stays invisible for the first frame until then.
+        var cardSize by remember { mutableStateOf(IntSize.Zero) }
+        val density = LocalDensity.current
+        val cardW = with(density) { cardSize.width.toDp() }
+        val cardH = with(density) { cardSize.height.toDp() }
+        val cardGap = 6.dp
+        val usableTop = topOverlayIntrusion
+        val usableBottom = maxHeight - bottomOverlayIntrusion
+        val belowY = yPos + boxHeight + cardGap
+        val cardY =
+            if (belowY + cardH > usableBottom) (yPos - cardGap - cardH).coerceAtLeast(usableTop)
+            else belowY
+        val cardX = (xPos + (boxWidth - cardW) / 2)
+            .coerceIn(0.dp, (maxWidth - cardW).coerceAtLeast(0.dp))
+
+        Card(
+            modifier = Modifier
+                .offset(x = cardX, y = cardY)
+                .onSizeChanged { cardSize = it }
+                .alpha(if (cardSize == IntSize.Zero) 0f else dimAlpha),
+            colors = CardDefaults.cardColors(
+                containerColor = Color.Black.copy(alpha = 0.85f)
+            ),
+            shape = RoundedCornerShape(6.dp)
+        ) {
+            Column(
+                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Column(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text(
-                        text = "${target.id} | ${target.targetType}",
-                        color = markerColor,
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        fontWeight = FontWeight.Bold
-                    )
 
-                    Text(
-                        text = "CONF: ${(target.confidence * 100).toInt()}%",
-                        color = when {
-                            target.confidence > 0.8f -> Color(0xFF038C16)
-                            target.confidence > 0.6f -> Color(0xFFFFAA00)
-                            else                     -> Color(0xFFFF4444)
-                        },
-                        fontSize = 9.sp,
-                        fontFamily = FontFamily.Monospace
-                    )
+                Text(
+                    text = "${target.id} | ${target.targetType}",
+                    color = markerColor,
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    fontWeight = FontWeight.Bold
+                )
 
-                    Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = "CONF: ${(target.confidence * 100).toInt()}%",
+                    color = when {
+                        target.confidence > 0.8f -> Color(0xFF038C16)
+                        target.confidence > 0.6f -> Color(0xFFFFAA00)
+                        else                     -> Color(0xFFFF4444)
+                    },
+                    fontSize = 9.sp,
+                    fontFamily = FontFamily.Monospace
+                )
 
-                    // LOCK affordance only on confirmed (lockable) tracks, or to
-                    // release an already-locked one. Unconfirmed/fallback tracks
-                    // show WHY they can't be locked instead of a dead button.
-                    if (lockable || isLocked) {
-                        Button(
-                            onClick = onLockClick,
-                            modifier = Modifier
-                                .height(26.dp)
-                                .widthIn(min = 70.dp),
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = if (isLocked) Color(0xFFFFAA00)
-                                                 else Color(0xFF038C16)
-                            ),
-                            shape = RoundedCornerShape(4.dp),
-                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
-                        ) {
-                            Text(
-                                text = if (isLocked) "UNLOCK" else "LOCK",
-                                fontSize = 10.sp,
-                                fontWeight = FontWeight.Bold,
-                                color = Color.Black,
-                                fontFamily = FontFamily.Monospace
-                            )
-                        }
-                    } else {
+                Spacer(modifier = Modifier.height(4.dp))
+
+                // LOCK affordance only on confirmed (lockable) tracks, or to
+                // release an already-locked one. Unconfirmed/fallback tracks
+                // show WHY they can't be locked instead of a dead button.
+                if (lockable || isLocked) {
+                    Button(
+                        onClick = onLockClick,
+                        modifier = Modifier
+                            .height(26.dp)
+                            .widthIn(min = 70.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (isLocked) Color(0xFFFFAA00)
+                                             else Color(0xFF038C16)
+                        ),
+                        shape = RoundedCornerShape(4.dp),
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp)
+                    ) {
                         Text(
-                            text = "UNCONFIRMED",
-                            fontSize = 9.sp,
+                            text = if (isLocked) "UNLOCK" else "LOCK",
+                            fontSize = 10.sp,
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFFFFAA00),
+                            color = Color.Black,
                             fontFamily = FontFamily.Monospace
                         )
                     }
+                } else {
+                    Text(
+                        text = "UNCONFIRMED",
+                        fontSize = 9.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFFFFAA00),
+                        fontFamily = FontFamily.Monospace
+                    )
                 }
             }
         }
