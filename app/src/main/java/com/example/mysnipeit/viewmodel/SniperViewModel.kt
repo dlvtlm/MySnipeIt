@@ -637,6 +637,9 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
         repository.slewToAcousticContact(
             rawMicAzimuthDeg = current.rawAzimuthDeg,
             worldBearingDeg = current.bearingDeg,
+            // Hold the camera's current tilt: the mic array resolves azimuth
+            // only, so a slew must not move the elevation the operator set.
+            currentServoVerticalDeg = latchedSensorData.value.servoVerticalDeg()?.toDouble(),
         )
         _activeAudioAlert.value = current.copy(
             isAccepted = true,

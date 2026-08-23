@@ -244,6 +244,10 @@ Two options were on the table:
 
 **Why the second wins:** the mic array and the pan servo are both bolted to the same fixed tripod, so they share a frame separated by one mechanical constant. That conversion involves **no compass at all** — which makes the slew path immune to a stale or missing compass fix, exactly the condition under which you most want a gunshot alert to still work.
 
+**The slew is horizontal-only.** A 4-mic array resolves azimuth, not elevation, so a slew has nothing to say about tilt and must never move it. But `set_servo_angles` carries both axes with no "leave this one alone" encoding — so the app expresses "don't move" by reading the camera's current `vertical_deg` and echoing it straight back.
+
+> This was a real bug. The tilt used to be sent as a hardcoded `SERVO_VERTICAL_LEVEL_DEG` (90° = horizon), so **every slew recentred the camera and discarded the operator's elevation.** The lesson generalises: "we have no elevation information" means *don't command elevation*, not *command it to level*. Level is not a neutral value — it is an assertion, and it overrode the operator every time.
+
 #### Data models — [`data/models/`](app/src/main/java/com/example/mysnipeit/data/models)
 
 [`SensorData.kt`](app/src/main/java/com/example/mysnipeit/data/models/SensorData.kt) mirrors the Pi's nested C structs (`ddl_frame` → `distance` / `temperature_humidity` / `servo` / `gps` / `compass` / `wind`). It exposes helper extensions — `distanceM()`, `gpsLatLon()`, `windSpeedMps()`, `compassHeadingDeg()` and friends — that **fold the `valid` check and the null check into the read**. Always use them; never reach into the nested fields directly, or you'll read a stale or invalid value as if it were good.

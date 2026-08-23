@@ -168,8 +168,19 @@ class SniperRepository {
      *    the Pi can resolve servo angles using its own freshest compass
      *    reading at the moment of slew. (Not the active contract — the
      *    Pi currently only implements set_servo_angles.)
+     *
+     * @param currentServoVerticalDeg the camera's CURRENT tilt, so the
+     *  slew can leave it untouched. The mic array gives azimuth only, so
+     *  a slew must never move the tilt; since the Pi's set_servo_angles
+     *  always carries both axes, "don't move" is expressed by echoing the
+     *  present angle back. Null (or an implausible reading) falls back to
+     *  [RigGeometry.SERVO_VERTICAL_LEVEL_DEG].
      */
-    fun slewToAcousticContact(rawMicAzimuthDeg: Double, worldBearingDeg: Double) {
+    fun slewToAcousticContact(
+        rawMicAzimuthDeg: Double,
+        worldBearingDeg: Double,
+        currentServoVerticalDeg: Double? = null,
+    ) {
         when (SLEW_COMMAND_MODE) {
             SlewCommandMode.SLEW_TO_BEARING -> {
                 raspberryPiClient.sendWsCommand(
@@ -185,10 +196,25 @@ class SniperRepository {
                 // pan range (the Pi clamps again defensively).
                 val servoH = (rawMicAzimuthDeg + RigGeometry.MIC_TO_SERVO_OFFSET_DEG)
                     .coerceIn(0.0, 180.0)
-                // Mic-only contact has no elevation info — default to
-                // level (servo center vertical). Pi-side autonomous scan
-                // can sweep up/down from there.
-                val servoV = RigGeometry.SERVO_VERTICAL_LEVEL_DEG
+                // The slew is HORIZONTAL-ONLY. A 4-mic array resolves
+                // azimuth, not elevation, so there is nothing to say about
+                // tilt. `set_servo_angles` has no "leave this axis alone"
+                // encoding, so we hold the tilt by commanding it to where it
+                // already is — the operator's aim survives the slew.
+                //
+                // This previously sent SERVO_VERTICAL_LEVEL_DEG every time,
+                // which recentred the camera to the horizon on every slew and
+                // threw away the operator's elevation. "No elevation info"
+                // means DON'T COMMAND elevation — not command it to level.
+                //
+                // Guard on > 0: ServoFrame.verticalDeg defaults to 0f when the
+                // field is missing from the frame, so an exact 0.0 is far more
+                // likely a missing reading than a genuine full-down aim — and
+                // commanding 0 would pitch the camera straight down. Fall back
+                // to level only when there is no usable reading at all.
+                val servoV = currentServoVerticalDeg
+                    ?.takeIf { it > 0.0 && it <= 180.0 }
+                    ?: RigGeometry.SERVO_VERTICAL_LEVEL_DEG
                 raspberryPiClient.sendWsCommand(
                     command = "set_servo_angles",
                     params = mapOf(
