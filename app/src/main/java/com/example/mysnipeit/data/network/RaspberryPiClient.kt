@@ -59,10 +59,6 @@ class RaspberryPiClient {
     private val _detectedTargets = MutableStateFlow<List<DetectedTarget>>(emptyList())
     val detectedTargets: StateFlow<List<DetectedTarget>> = _detectedTargets.asStateFlow()
 
-    // Shooting solution from RPi
-    private val _shootingSolution = MutableStateFlow<ShootingSolution?>(null)
-    val shootingSolution: StateFlow<ShootingSolution?> = _shootingSolution.asStateFlow()
-
     // Latest acoustic event from the Pi's 4-mic TDOA module. Single-slot
     // flow — the alert state machine (added in a later step) handles
     // de-dupe and timeout; the parser just publishes the raw event.
@@ -303,20 +299,6 @@ class RaspberryPiClient {
                         lastWsDetectionAt = System.currentTimeMillis()
                         Log.d(TAG, "Detections: ${targets.size} (ids=${targets.joinToString { it.id }})")
                     }
-                }
-                "shooting_solution" -> {
-                    val solutionMap = gson.fromJson(message, Map::class.java)
-                    val solution = ShootingSolution(
-                        targetId = solutionMap["targetId"] as? String ?: "",
-                        azimuth = solutionMap["azimuth"] as? Double ?: 0.0,
-                        elevation = solutionMap["elevation"] as? Double ?: 0.0,
-                        windageAdjustment = solutionMap["windageAdjustment"] as? Double ?: 0.0,
-                        elevationAdjustment = solutionMap["elevationAdjustment"] as? Double ?: 0.0,
-                        confidence = (solutionMap["confidence"] as? Double)?.toFloat() ?: 0f,
-                        timestamp = (solutionMap["timestamp"] as? Double)?.toLong() ?: System.currentTimeMillis()
-                    )
-                    _shootingSolution.value = solution
-                    Log.d(TAG, "Received shooting solution for ${solution.targetId}")
                 }
                 "stream_ready" -> {
                     val streamData = gson.fromJson(message, Map::class.java)
@@ -572,24 +554,7 @@ class RaspberryPiClient {
                 _detectedTargets.value = mockTargets
                 Log.d(TAG, " Generated ${mockTargets.size} targets")
 
-                // 3. Generate shooting solution for random target
-                if (mockTargets.isNotEmpty()) {
-                    val randomTarget = mockTargets.random()
-
-                    _shootingSolution.value = ShootingSolution(
-                        targetId = randomTarget.id,
-                        azimuth = 245.0 + (Math.random() * 10),
-                        elevation = 12.0 + (Math.random() * 5),
-                        windageAdjustment = 2.0 + (Math.random() * 2),
-                        elevationAdjustment = 1.5 + (Math.random() * 1),
-                        confidence = 0.75f + (Math.random() * 0.2).toFloat(),
-                        timestamp = System.currentTimeMillis()
-                    )
-
-                    Log.d(TAG, " Generated solution for ${randomTarget.id}: AZ=${_shootingSolution.value?.azimuth?.toInt()}° EL=${_shootingSolution.value?.elevation?.toInt()}°")
-                }
-
-                // 4. Update system status
+                // 3. Update system status
                 _systemStatus.value = SystemStatus(
                     connectionStatus = ConnectionState.CONNECTED,
                     batteryLevel = 85,
@@ -661,7 +626,6 @@ class RaspberryPiClient {
         )
         _sensorData.value = null
         _detectedTargets.value = emptyList()
-        _shootingSolution.value = null
         _acousticEvent.value = null
         // Explicit teardown (operator left the live view) — NOW clear the video
         // stream state. (A transient WS close no longer does this; see onClose.)
@@ -780,17 +744,5 @@ class RaspberryPiClient {
  *       }
  *     }
  *   ]
- * }
- *
- * Shooting Solution:
- * {
- *   "type": "shooting_solution",
- *   "targetId": "1",
- *   "azimuth": 245.5,
- *   "elevation": 12.3,
- *   "windageAdjustment": 2.1,
- *   "elevationAdjustment": 1.5,
- *   "confidence": 0.85,
- *   "timestamp": 1234567890
  * }
  */

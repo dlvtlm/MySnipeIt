@@ -149,7 +149,7 @@ Pi sensors ──localizeTarget──► target world coords ──solveFiringSo
 
 **Why two stages:** the tablet and the rig are at *different physical positions*. The Pi's own bearing and distance to the target are useless to the shooter directly — the solution has to be recomputed from the sniper's GPS toward the target's absolute world position. The intermediate `TargetLocation` is that hand-off.
 
-Note that the Pi *does* send its own `shooting_solution` message and the client still parses it — but the UI does not consume it. The app-computed solution replaces it, because only the app knows where the shooter is standing.
+**The Pi does not compute a firing solution at all** — by design it publishes only the raw sensor data needed to compute one. That split is deliberate and it's the right one: the solution depends on where the *shooter* stands, and the rig has no way of knowing that. `firingSolution` is the only firing solution in the system.
 
 #### 2c. The acoustic alert state machine — `activeAudioAlert`
 
@@ -184,7 +184,7 @@ Almost all the integration complexity in the project. **The file has a long JSDo
 
 The HTTP path (`sendCommand`) is kept because the API is defined and may be implemented later. Everything that actually needs to work goes over the WebSocket via `sendWsCommand`, with the envelope `{type, command, params, timestamp}`.
 
-**Inbound messages** are dispatched in `handleWebSocketMessage`: `sensor_data`, `target_detection`, `shooting_solution`, `stream_ready`, `system_status`, `acoustic_event`.
+**Inbound messages** are dispatched in `handleWebSocketMessage`: `sensor_data`, `target_detection`, `stream_ready`, `system_status`, `acoustic_event`.
 
 **Two background jobs:**
 
@@ -369,7 +369,7 @@ The UI, the ViewModel and `RaspberryPiClient` have **no** test coverage.
 These are the questions most likely to be asked. Short answers, with the reasoning behind them.
 
 #### 1. Why does the app compute the firing solution when the Pi already sends one?
-Because the Pi's solution is from the *rig's* position, and the shooter is somewhere else. Range, bearing and look angle all differ. The Pi's `shooting_solution` message is still parsed but not displayed; the app recomputes from the sniper's own GPS toward the target's absolute world coordinates.
+Because a solution is only meaningful from the shooter's position, and the rig doesn't know where that is. Range, bearing and look angle all differ between the two. So the split of responsibility is: the Pi measures and publishes (rangefinder, compass, servo pose, GPS, atmosphere), and the app computes — localising the target in world coordinates from the rig's readings, then solving from the sniper's own GPS toward it.
 
 #### 2. Why is there no target tracking in the app?
 There was, and it was removed. The Pi runs a motion-compensated tracker that associates in world-angle space and coasts through gaps. An app-side tracker on top of that produced two disagreeing trackers and visible ID churn. The app is now a pass-through, which also means the id it displays is the id it sends back on lock — which is what made lock hit the right target.

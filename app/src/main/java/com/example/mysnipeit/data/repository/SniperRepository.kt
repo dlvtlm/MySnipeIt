@@ -39,7 +39,6 @@ class SniperRepository {
     // Expose data streams from the network client
     val sensorData: StateFlow<SensorData?> = raspberryPiClient.sensorData
     val detectedTargets: StateFlow<List<DetectedTarget>> = raspberryPiClient.detectedTargets
-    val shootingSolution: StateFlow<ShootingSolution?> = raspberryPiClient.shootingSolution
     val systemStatus: StateFlow<SystemStatus> = raspberryPiClient.systemStatus
     val acousticEvent: StateFlow<AcousticEvent?> = raspberryPiClient.acousticEvent
 

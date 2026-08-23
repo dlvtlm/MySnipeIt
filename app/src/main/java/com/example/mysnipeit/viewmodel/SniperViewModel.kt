@@ -269,10 +269,6 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
     // Data from repository
     val sensorData: StateFlow<SensorData?> = repository.sensorData
     val detectedTargets: StateFlow<List<DetectedTarget>> = repository.detectedTargets
-    // NOTE: We no longer consume the Pi's shooting_solution — the app
-    // computes its own from latchedSensorData + sniper GPS + loadout (see
-    // [firingSolution] below). The repository flow stays in place in case
-    // the Pi still sends it; it just isn't exposed to the UI anymore.
     val systemStatus: StateFlow<SystemStatus> = repository.systemStatus
     // Raw acoustic events from the Pi's 4-mic TDOA module. The dashboard
     // alert UI (added in a later commit) consumes a derived flow that
@@ -333,8 +329,11 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
      *   latched Pi sensors  ──►  localizeTarget  ──► target world coords
      *   sniper GPS + loadout + atmosphere ──► solveFiringSolution
      *
-     * Replaces the Pi-sourced ShootingSolution that used to drive the
-     * dashboard's firing-solution card.
+     * The Pi does NOT compute or send a firing solution — by design it
+     * only publishes the raw sensor data needed to compute one. It has to
+     * be this way: the solution depends on where the SHOOTER stands, and
+     * the rig doesn't know that. This flow is the only firing solution
+     * that exists in the system.
      */
     val firingSolution: StateFlow<FiringSolution?> = combine(
         latchedSensorData,
