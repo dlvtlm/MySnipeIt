@@ -119,7 +119,7 @@ The only Activity in the app. It does four things and then gets out of the way:
 
 **[`SniperViewModel.kt`](app/src/main/java/com/example/mysnipeit/viewmodel/SniperViewModel.kt)** — the largest and most important non-UI file in the app. Everything the UI renders comes out of here as a `StateFlow`.
 
-Four mechanisms in here are worth understanding properly, because they're where the real design thinking is.
+Three mechanisms in here are worth understanding properly, because they're where the real design thinking is.
 
 #### 2a. Sensor latching — `latchedSensorData`
 
@@ -151,17 +151,7 @@ Pi sensors ──localizeTarget──► target world coords ──solveFiringSo
 
 Note that the Pi *does* send its own `shooting_solution` message and the client still parses it — but the UI does not consume it. The app-computed solution replaces it, because only the app knows where the shooter is standing.
 
-#### 2c. Bearing calibration — `tripodWorldBearingDeg`
-
-**The problem, and it's a subtle one.** The mic array is bolted to the **fixed tripod**. The compass is bolted to the **moving camera arm**. So the compass tells you where the *camera* is pointing, which after any pan tells you nothing about where the *microphones* are pointing. There is no mechanical constant linking them — the relationship changes every time the head rotates.
-
-**The fix:** operator calibration. The operator centres the camera at servo 90° (tripod-forward) and taps **MENU → Calibrate Bearing**. At that instant the compass reading *is* the world bearing of the tripod-forward direction, which is also the world bearing of the mic array's 0° axis. That captured number is stored and plays the role of the missing constant.
-
-It **expires** after `tripodCalibrationTimeoutMs` (90 min). Expiry gates the *use* of the value, not the value itself — `isCalibrationValid()` / `effectiveTripodWorldBearingDeg()` return null once stale, but the saved number stays visible in the dialog for reference. The dashboard's `CalibrationAgeChip` turns red at exactly the same threshold, so "chip is red" and "calibration expired" are the same statement.
-
-UI: [`CalibrateBearingDialog.kt`](app/src/main/java/com/example/mysnipeit/ui/dashboard/CalibrateBearingDialog.kt)
-
-#### 2d. The acoustic alert state machine — `activeAudioAlert`
+#### 2c. The acoustic alert state machine — `activeAudioAlert`
 
 Raw `acousticEvent` frames are not directly renderable — a gunshot produces a burst of detections, and a naive UI would stack a card per detection. `applyAcousticEvent` turns the raw stream into one derived alert:
 
@@ -248,9 +238,15 @@ Two options were on the table:
 
 > This was a real bug. The tilt used to be sent as a hardcoded `SERVO_VERTICAL_LEVEL_DEG` (90° = horizon), so **every slew recentred the camera and discarded the operator's elevation.** The lesson generalises: "we have no elevation information" means *don't command elevation*, not *command it to level*. Level is not a neutral value — it is an assertion, and it overrode the operator every time.
 
+The tilt is validated with `?.takeIf { it in 0.0..180.0 }` — the servo's mechanical travel — falling back to level only when there is genuinely no reading. That range check is honest validation rather than a guess precisely because [`ServoFrame`](app/src/main/java/com/example/mysnipeit/data/models/SensorData.kt)'s angles are nullable (below): null means "no reading", so `0.0` can be trusted as a real full-down aim and held rather than discarded.
+
 #### Data models — [`data/models/`](app/src/main/java/com/example/mysnipeit/data/models)
 
 [`SensorData.kt`](app/src/main/java/com/example/mysnipeit/data/models/SensorData.kt) mirrors the Pi's nested C structs (`ddl_frame` → `distance` / `temperature_humidity` / `servo` / `gps` / `compass` / `wind`). It exposes helper extensions — `distanceM()`, `gpsLatLon()`, `windSpeedMps()`, `compassHeadingDeg()` and friends — that **fold the `valid` check and the null check into the read**. Always use them; never reach into the nested fields directly, or you'll read a stale or invalid value as if it were good.
+
+**Angles that can be absent are typed `Float?`, never defaulted to `0f`.** This applies to `CompassFrame.headingDeg` and to both `ServoFrame` angles, and the reason is the same in each case: **`0` is a legitimate value, not a sentinel.** `0°` on the compass is due true north; `0°` on the tilt servo is the camera aimed straight down. A non-null `0f` default makes "the Pi never sent this field" indistinguishable from a real reading, and every consumer downstream then acts on a number nobody measured.
+
+> `ServoFrame` carried that `0f` default until recently, which is why the slew guard above once had to treat an exact `0.0` as suspicious rather than trusting it. Typing the field honestly removed the need for the heuristic. The same care extends to the latch in `SniperViewModel`: a servo frame is only latched when **both** angles are present, so a partial frame can't displace the last good one and quietly send the slew back to its fallback.
 
 ---
 
@@ -276,7 +272,7 @@ Turns the rig's sensors into the target's absolute world position, in five steps
 
 #### [`AcousticBearing.kt`](app/src/main/java/com/example/mysnipeit/data/ballistics/AcousticBearing.kt)
 
-One line of real math — `world = tripodWorldBearing + event.azimuth` — wrapped in the null contract. The file's whole value is the *documentation* of why the live compass can't be used here (see [2c](#2c-bearing-calibration--tripodworldbearingdeg)).
+One line of real math — `world = tripodWorldBearing + event.azimuth` — wrapped in the null contract. The `tripodWorldBearing` term is an operator-captured value, not a live compass reading, because the compass sits on the moving camera head while the mic array is on the fixed tripod. The file's own KDoc carries the full reasoning.
 
 #### [`FiringSolutionSolver.kt`](app/src/main/java/com/example/mysnipeit/data/ballistics/FiringSolutionSolver.kt)
 
@@ -385,7 +381,9 @@ Because the compass is on the moving head and the microphones are on the fixed t
 A WebSocket close no longer clears `rtspStreamUrl` or `streamReady` — only an explicit `disconnect()` does. The player watches `streamReady` alone. On a flaky soft-AP link, control-channel blips are routine, and there's no reason one should black out working video. Hence two chips: **LINK** and **VIDEO**.
 
 #### 5. Why `null` everywhere instead of default values?
-Every sensor read that can fail returns null, and every consumer renders `—`. A missing compass heading substituted as `0°` doesn't look like an error — it looks like *due north*, and it silently poisons every downstream bearing. This is the same class of failure as the downhill bug: **wrong-but-plausible is more dangerous than visibly missing.**
+Every sensor read that can fail returns null, and every consumer renders `—`. A missing compass heading substituted as `0°` doesn't look like an error — it looks like *due north*, and it silently poisons every downstream bearing. A missing servo tilt substituted as `0°` looks like the camera is aimed at the ground. In both cases `0` is a real, meaningful value, so it can never double as "no data" — which is why those fields are `Float?` rather than defaulted.
+
+This is the same class of failure as the downhill bug: **wrong-but-plausible is more dangerous than visibly missing.** A crash or a `—` gets investigated; a confident wrong number gets acted on.
 
 #### 6. Why WebSocket for commands when there's an HTTP API?
 The Pi has no HTTP server — port 8000 isn't listening. The WebSocket is already open and the Pi parses inbound command frames there. The HTTP path is kept as a stub in case a server is added.
