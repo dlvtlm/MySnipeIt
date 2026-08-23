@@ -207,13 +207,13 @@ class SniperRepository {
                 // threw away the operator's elevation. "No elevation info"
                 // means DON'T COMMAND elevation — not command it to level.
                 //
-                // Guard on > 0: ServoFrame.verticalDeg defaults to 0f when the
-                // field is missing from the frame, so an exact 0.0 is far more
-                // likely a missing reading than a genuine full-down aim — and
-                // commanding 0 would pitch the camera straight down. Fall back
-                // to level only when there is no usable reading at all.
+                // ServoFrame.verticalDeg is nullable, so null already means
+                // "no reading" and 0.0 means a genuine full-down aim. The range
+                // check is therefore plain validation of the servo's mechanical
+                // travel, not a workaround for an ambiguous default. Fall back
+                // to level only when there is no reading at all.
                 val servoV = currentServoVerticalDeg
-                    ?.takeIf { it > 0.0 && it <= 180.0 }
+                    ?.takeIf { it in 0.0..180.0 }
                     ?: RigGeometry.SERVO_VERTICAL_LEVEL_DEG
                 raspberryPiClient.sendWsCommand(
                     command = "set_servo_angles",

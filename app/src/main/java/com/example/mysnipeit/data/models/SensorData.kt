@@ -25,8 +25,10 @@ import com.google.gson.annotations.SerializedName
  * Display rule: a sub-frame's data is shown on the dashboard only if the
  * sub-frame is present AND its `valid` flag is true. [ServoFrame] has no
  * `valid` field (matches the C struct on the Pi); it's treated as valid
- * whenever its sub-frame is present. [WindFrame] has TWO valid flags —
- * speed and direction can be valid independently.
+ * whenever its sub-frame is present, but its two angles are individually
+ * nullable so an absent field stays distinguishable from a real 0°.
+ * [WindFrame] has TWO valid flags — speed and direction can be valid
+ * independently.
  *
  * Quirk: [CompassFrame.headingDeg] is **nullable**. The Pi emits the JSON
  * literal `null` (not a number) when the magnetometer hasn't fixed yet —
@@ -78,12 +80,21 @@ data class TempHumidityFrame(
 )
 
 /**
- * Camera mount servo angles. Has NO `valid` field on the Pi side — when
- * this sub-frame is present, both angles are real readings.
+ * Camera mount servo angles. Has NO `valid` field on the Pi side (matches
+ * the C struct), so the sub-frame's presence is the only signal there is.
+ *
+ * Both angles are **nullable**, deliberately. With a non-null `0f` default,
+ * a field missing from the JSON was indistinguishable from a servo genuinely
+ * sitting at 0° — and 0° is a real position (full down), not a sentinel. Any
+ * consumer reading a spurious `0` as an angle would aim the camera at the
+ * ground. Same reasoning, and same fix, as [CompassFrame.headingDeg].
+ *
+ * Read via [servoHorizontalDeg] / [servoVerticalDeg] and treat null as
+ * "unknown". Never substitute 0.
  */
 data class ServoFrame(
-    @SerializedName("horizontal_deg") val horizontalDeg: Float = 0f,
-    @SerializedName("vertical_deg") val verticalDeg: Float = 0f,
+    @SerializedName("horizontal_deg") val horizontalDeg: Float? = null,
+    @SerializedName("vertical_deg") val verticalDeg: Float? = null,
 )
 
 /** GPS position + fix quality. `valid` gates whether the position is shown. */
@@ -166,8 +177,10 @@ fun SensorData?.gpsLatLon(): Pair<Double, Double>? =
 fun SensorData?.gpsSatellites(): Int? =
     this?.ddlFrame?.gps?.takeIf { it.valid }?.numSatellites
 
-// Servo angles — used by the future ballistics calculation, not displayed
-// on the dashboard. No `valid` check because the C struct doesn't have one.
+// Servo angles — used by the ballistics calculation and the acoustic slew,
+// not displayed on the dashboard. No `valid` check because the C struct
+// doesn't have one; null means the `servo` object OR the individual field
+// was absent from the JSON. Null is NOT 0 — 0° is a real servo position.
 fun SensorData?.servoHorizontalDeg(): Float? =
     this?.ddlFrame?.servo?.horizontalDeg
 

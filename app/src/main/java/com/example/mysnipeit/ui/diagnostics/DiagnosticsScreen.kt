@@ -353,9 +353,14 @@ private fun LiveSensorsPane(
             // Pass null so the chip renders "—" instead of OK/INVALID.
             valid = null,
             lines = ddl?.servo?.let {
+                // Both angles are nullable — print the literal "null", same
+                // as the compass heading below, so the diagnostic operator
+                // sees the Pi's actual emission rather than a substituted 0.
+                val hTxt = it.horizontalDeg?.let { d -> "%.2f".format(d) } ?: "null"
+                val vTxt = it.verticalDeg?.let { d -> "%.2f".format(d) } ?: "null"
                 listOf(
-                    "horizontal_deg = %.2f".format(it.horizontalDeg),
-                    "vertical_deg   = %.2f".format(it.verticalDeg),
+                    "horizontal_deg = $hTxt",
+                    "vertical_deg   = $vTxt",
                 )
             },
         )

@@ -755,7 +755,9 @@ class RaspberryPiClient {
  *
  * Display rule on the app side: each sub-frame's `valid` flag gates whether
  * the dashboard renders the values. ServoFrame has no `valid` and is treated
- * as always valid when the sub-frame is present. WindFrame has TWO valid
+ * as always valid when the sub-frame is present, though its two angles are
+ * individually nullable (`Float?`) so a missing field never reads as 0°.
+ * WindFrame has TWO valid
  * flags — speed and direction are independent. CompassFrame's `heading_deg`
  * is emitted as JSON `null` (not a number) when the magnetometer hasn't
  * fixed yet, so the Kotlin type is `Float?`. See [SensorData] for the exact

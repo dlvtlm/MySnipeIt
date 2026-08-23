@@ -413,8 +413,18 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
         // Refresh each latch from the current frame ----------------------
         ddl?.distance?.let { if (it.valid) distanceLatch = Latched(it, now) }
         ddl?.temperatureHumidity?.let { if (it.valid) tempHumLatch = Latched(it, now) }
-        // Servo has no valid flag — when the sub-frame is present, latch it.
-        ddl?.servo?.let { servoLatch = Latched(it, now) }
+        // Servo has no valid flag, so presence is the only signal — but the
+        // two angles are nullable, so only latch a frame that actually carries
+        // them. Without this a partial frame would displace the last good one,
+        // and the acoustic slew (which holds the tilt by echoing the current
+        // verticalDeg back) would fall through to level and recentre the
+        // camera — the exact bug the nullable angles exist to prevent. Same
+        // rule as the compass below.
+        ddl?.servo?.let {
+            if (it.horizontalDeg != null && it.verticalDeg != null) {
+                servoLatch = Latched(it, now)
+            }
+        }
         ddl?.gps?.let { if (it.valid) gpsLatch = Latched(it, now) }
         // Compass only latches when both `valid` AND headingDeg are non-null
         // (matches the rule in compassHeadingDeg() — a missing heading must
