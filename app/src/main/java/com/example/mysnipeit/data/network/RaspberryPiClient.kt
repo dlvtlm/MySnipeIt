@@ -727,7 +727,7 @@ class RaspberryPiClient {
  * fixed yet, so the Kotlin type is `Float?`. See [SensorData] for the exact
  * Kotlin shape and the helper extensions used by the dashboard.
  *
- * Target Detection:
+ * Target Detection (normal, tracker running):
  * {
  *   "type": "target_detection",
  *   "timestamp_ms": 5000,
@@ -741,8 +741,60 @@ class RaspberryPiClient {
  *         "y": 50,
  *         "width": 200,
  *         "height": 400
- *       }
+ *       },
+ *       "confirmed": true
  *     }
  *   ]
  * }
+ *
+ * `timestamp_ms` is the Orin's MONOTONIC clock. It is not epoch and is not
+ * comparable to the app's clock, so the app never reads it. Detection
+ * staleness uses the app's own receive time instead.
+ *
+ * `id` is a STABLE track id from the Pi's tracker: the same physical target
+ * keeps it across frames, through camera pans and through short detection
+ * gaps (the Pi coasts a track for up to ~1.5 s). Render it verbatim and send
+ * it straight back in `select_target`. A target gone longer than the coast
+ * window and then reacquired gets a NEW id, which is correct rather than a
+ * bug: after that long the tracker cannot claim it is the same object.
+ *
+ * `confirmed` has THREE states, and the third is the one that matters:
+ *
+ *   true    the Pi's tracker has associated this track across consecutive
+ *           frames and believes it is real. Only these are lockable.
+ *   false   a new/tentative track, seen too few times to trust. Drawn
+ *           ghosted, no LOCK affordance.
+ *   ABSENT  fallback / overlay-only mode: the message did not come from the
+ *           tracker at all, so the `id` values in it are the Orin's raw
+ *           per-frame INDICES (a position in this frame's detection list,
+ *           meaningless across frames) rather than track ids. Nothing in the
+ *           batch is lockable.
+ *
+ * Fallback shape - note the field is missing entirely, not set to false:
+ * {
+ *   "type": "target_detection",
+ *   "timestamp_ms": 5000,
+ *   "detections": [
+ *     { "id": "0", "class": "HUMAN", "confidence": 0.71,
+ *       "bbox": { "x": 100, "y": 50, "width": 200, "height": 400 } }
+ *   ]
+ * }
+ *
+ * Detect fallback by the ABSENCE of `confirmed`, never by inspecting id
+ * values. A per-frame index "1" and a track id "1" are byte-for-byte
+ * identical on the wire, so the presence of the field is the only reliable
+ * signal that the tracker produced this message. That is also why
+ * DetectedTarget.confirmed is `Boolean?` and not a `Boolean` defaulting to
+ * false: a default would merge "no tracker running" with "tracker says this
+ * track is tentative", which are different facts. Same reasoning as
+ * CompassFrame.headingDeg and the ServoFrame angles.
+ *
+ * An empty `detections: []` array is an explicit "clear all boxes" from the
+ * Pi and wipes the overlay immediately. Clearing is not a timeout behaviour.
+ * The 3 s staleness watchdog is only a link-lost backstop.
+ *
+ * NOTE: the exact promotion rule from false to true (believed to be 2 or
+ * more consecutive hits) is Pi-side behaviour documented here second-hand
+ * and not verified against the Pi's source. The app does not implement any
+ * of it - it only reads the field and decides whether to offer a LOCK.
  */
