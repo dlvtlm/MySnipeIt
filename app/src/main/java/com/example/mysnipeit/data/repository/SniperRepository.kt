@@ -156,10 +156,11 @@ class SniperRepository {
      * round-trip through the other:
      *
      *  - [SlewCommandMode.SET_SERVO_ANGLES] uses [rawMicAzimuthDeg]
-     *    directly with [RigGeometry.MIC_TO_SERVO_OFFSET_DEG] — no
+     *    directly against [RigGeometry.SERVO_HORIZONTAL_CENTER_DEG] — no
      *    compass involved, since the mic array and the servo are both
-     *    bolted to the same fixed tripod (they share a frame, just
-     *    rotated by 90°). Robust against stale/missing compass. The Pi
+     *    bolted to the same fixed tripod. Robust against stale/missing
+     *    compass. Note the two frames run in opposite senses, so the
+     *    conversion subtracts rather than adds. The Pi
      *    feeds these straight to ddl_servo_set_target + a NOISE_DETECTED
      *    event, which slews the head and resumes the autonomous scan
      *    from there.
@@ -188,12 +189,21 @@ class SniperRepository {
                 )
             }
             SlewCommandMode.SET_SERVO_ANGLES -> {
-                // Direct mic-frame → servo-frame conversion. No compass,
-                // no world bearing, no detour: the two frames are
-                // mechanically related by a single constant offset
-                // (mic 0° ↔ servo 90°). Clamp to the servo's mechanical
-                // pan range (the Pi clamps again defensively).
-                val servoH = (rawMicAzimuthDeg + RigGeometry.MIC_TO_SERVO_OFFSET_DEG)
+                // Direct mic-frame → servo-frame conversion. No compass, no
+                // world bearing, no detour: both are bolted to the fixed
+                // tripod, so mic azimuth 0 is the servo centre.
+                //
+                // SUBTRACT, don't add. Mic azimuth is positive to the RIGHT,
+                // while the pan servo turns the camera LEFT as its angle
+                // increases, so the two frames run in opposite senses. A clap
+                // at mic +60 (60 deg right) must drive the servo to 90 - 60 =
+                // 30. The previous `mic + 90` sent it to 150 instead, i.e. the
+                // mirror image, so every acoustic slew turned the camera away
+                // from the contact. See RigGeometry for the full convention.
+                //
+                // Clamp to the servo's mechanical pan range (the Pi clamps
+                // again defensively).
+                val servoH = (RigGeometry.SERVO_HORIZONTAL_CENTER_DEG - rawMicAzimuthDeg)
                     .coerceIn(0.0, 180.0)
                 // The slew is HORIZONTAL-ONLY. A 4-mic array resolves
                 // azimuth, not elevation, so there is nothing to say about

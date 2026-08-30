@@ -230,7 +230,7 @@ A thin pass-through over the client that re-exposes the flows and forwards comma
 Two options were on the table:
 
 - `SLEW_TO_BEARING` sends a world bearing and lets the Pi resolve servo angles with its own freshest compass reading.
-- `SET_SERVO_ANGLES` is **the active choice.** The app converts mic azimuth to servo angle directly (`micAzimuth + 90`, clamped to 0 to 180) and the Pi just moves the servos.
+- `SET_SERVO_ANGLES` is **the active choice.** The app converts mic azimuth to servo angle directly (`90 - micAzimuth`, clamped to 0 to 180) and the Pi just moves the servos. It subtracts because the two frames run in opposite senses: mic azimuth is positive to the right, while the pan servo turns the camera left as its angle increases.
 
 **Why the second wins:** the mic array and the pan servo are both bolted to the same fixed tripod, so they share a frame separated by one mechanical constant. That conversion involves **no compass at all**, which makes the slew path immune to a stale or missing compass fix. That is exactly the condition under which you most want a gunshot alert to still work.
 

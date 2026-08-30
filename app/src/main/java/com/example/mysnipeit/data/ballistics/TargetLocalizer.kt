@@ -71,21 +71,28 @@ object RigGeometry {
     // That captured value plays the role of the offset for the lifetime
     // of the calibration; operator re-calibrates after moving the rig.
 
-    /**
-     * Angular offset (deg) between the mic array's azimuth-zero axis
-     * and the pan servo's center (90°) position. The mic array and the
-     * servo are both bolted to the fixed tripod with mic 0° aligned to
-     * servo 90° — so the conversion is:
-     *
-     *   servo_horizontal_deg = mic_azim_deg + MIC_TO_SERVO_OFFSET_DEG
-     *
-     * Used by the SET_SERVO_ANGLES slew path (see
-     * [com.example.mysnipeit.data.repository.SlewCommandMode]).
-     * Independent of [MIC_ARRAY_OFFSET_DEG]: this one is about the
-     * mic↔servo relationship (no compass), that one is about the
-     * compass↔mic relationship (used for display).
-     */
-    const val MIC_TO_SERVO_OFFSET_DEG = 90.0
+    // --- Mic array to pan servo -------------------------------------------
+    // The mic array and the pan servo are both bolted to the fixed tripod, so
+    // one constant relates them and no compass is involved. Mic azimuth 0
+    // (straight ahead) corresponds to the servo centre, which is
+    // [SERVO_HORIZONTAL_CENTER_DEG].
+    //
+    // The two frames run in OPPOSITE senses. Mic azimuth is positive to the
+    // RIGHT (the array is +X right, +Y forward along the boresight, with
+    // elements at -90/-30/+30/+90). The pan servo turns the camera LEFT as its
+    // angle increases. So pointing the camera at a contact on the right means
+    // DECREASING the servo angle from centre:
+    //
+    //   servo_horizontal_deg = SERVO_HORIZONTAL_CENTER_DEG - mic_azim_deg
+    //
+    // Worked example: a clap 60 deg to the right is mic +60, so the servo goes
+    // to 90 - 60 = 30. This replaced an earlier `mic + 90`, which slewed the
+    // camera to the mirror image of the contact on every acoustic alert.
+    //
+    // Verified on the rig: the sign is empirical and the app cannot check it,
+    // so if the Pi ever changes its pan convention this has to flip back. Used
+    // only by the SET_SERVO_ANGLES slew path (see
+    // [com.example.mysnipeit.data.repository.SlewCommandMode]).
 }
 
 /** Mean Earth radius (m) — fine for the equirectangular projection below. */
