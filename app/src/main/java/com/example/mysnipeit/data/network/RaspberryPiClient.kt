@@ -789,6 +789,16 @@ class RaspberryPiClient {
  * track is tentative", which are different facts. Same reasoning as
  * CompassFrame.headingDeg and the ServoFrame angles.
  *
+ * A fallback batch is a Pi SKIP FRAME: the Pi could not join the frame to a
+ * servo pose, or the frame was captured while the arm was still settling
+ * after a large commanded slew, so it forwarded the Orin's boxes untracked.
+ * The consequence for the app is easy to get wrong: on such a frame the
+ * LOCKED track's stable id is absent BY CONSTRUCTION, even though the Pi's
+ * track is alive and coasting. Resolving a lock against one therefore always
+ * fails. Use List<DetectedTarget>.isFallbackFrame() (Target.kt) and HOLD the
+ * lock display across these batches instead - see DashboardScreen's
+ * lockedTarget and SniperViewModel.refreshLockPresence().
+ *
  * An empty `detections: []` array is an explicit "clear all boxes" from the
  * Pi and wipes the overlay immediately. Clearing is not a timeout behaviour.
  * The 3 s staleness watchdog is only a link-lost backstop.

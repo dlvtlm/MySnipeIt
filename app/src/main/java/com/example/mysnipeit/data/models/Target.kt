@@ -44,3 +44,24 @@ enum class TargetType {
     STRUCTURE,
     UNKNOWN
 }
+
+/**
+ * True when this batch is a Pi *skip frame* (a.k.a. fallback frame): the Pi
+ * could not join the frame to a servo pose, or the frame was captured while
+ * the arm was still settling after a large commanded slew, so it forwarded
+ * the Orin's raw per-frame detections without running the tracker.
+ *
+ * The Pi signals this by OMITTING `confirmed` from every detection. On such a
+ * batch the `id`s are the Orin's per-frame labels, NOT stable track ids, so:
+ *
+ *  - nothing in it is lockable, and
+ *  - **the locked track's id is guaranteed absent even while that track is
+ *    alive and coasting on the Pi.** Resolving a lock against a skip frame
+ *    therefore always fails. Callers must HOLD the lock display across these
+ *    batches instead of concluding the target is gone.
+ *
+ * An empty batch is NOT a skip frame: `detections: []` is the Pi's explicit
+ * "clear all boxes", which is real information about a tracked frame.
+ */
+fun List<DetectedTarget>.isFallbackFrame(): Boolean =
+    isNotEmpty() && all { it.confirmed == null }

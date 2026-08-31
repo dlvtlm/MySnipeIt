@@ -81,6 +81,12 @@ fun TacticalVideoPlayer(
     detectedTargets: List<DetectedTarget>,
     firingSolution: FiringSolution?,
     selectedTargetId: String?,
+    // See SniperViewModel.lockLost: the locked id has been absent from tracked
+    // frames past the Pi's coast window, so the Pi has almost certainly deleted
+    // that track (and, per the Pi contract, is now frozen on a dead id until
+    // the operator releases it). Turns the state chip into a warning; the lock
+    // itself is NOT cleared here.
+    lockLost: Boolean = false,
     connectionState: ConnectionState,
     streamReady: Boolean,
     videoStreamUrl: String?,
@@ -113,8 +119,11 @@ fun TacticalVideoPlayer(
     // ViewModel) is the single source of truth for "which target is locked" —
     // the marker, the firing card, and the bottom UNLOCK button all read it, so
     // they can't desync. A locked target that leaves the frame keeps
-    // selectedTargetId set (so UNLOCK still works); its marker/card just aren't
-    // drawn until it returns.
+    // selectedTargetId set (so UNLOCK still works); its marker just isn't drawn
+    // until it returns, and the chip switches to LOCK LOST once the absence
+    // outlasts the Pi's coast window. (The dashboard's firing card is held
+    // across skip frames — see the lockedTarget note there — because those
+    // frames carry per-frame ids that can never match the locked one.)
 
     // Load the stream whenever it's ready — independent of the WS control
     // channel. The RTSP video is a separate connection to the same host, so a
@@ -350,9 +359,27 @@ fun TacticalVideoPlayer(
             ) {
                 val hasLockedTarget = !selectedTargetId.isNullOrEmpty()
 
+                // Three states, not two. The old binary chip kept claiming
+                // TARGET LOCKED while the box underneath had already reverted
+                // to orange with a LOCK button — the two read different sources
+                // (this one reads the lock, the box matches ids), and that
+                // disagreement was the operator's only clue the track had been
+                // renumbered. LOCK LOST names it instead. UNLOCK stays live on
+                // the sensor strip: releasing is the operator's call, and it is
+                // also what unfreezes the Pi's servo.
+                val chipText = when {
+                    hasLockedTarget && lockLost -> "LOCK LOST"
+                    hasLockedTarget -> "TARGET LOCKED"
+                    else -> "SCANNING"
+                }
+
                 Text(
-                    text = if (hasLockedTarget) "TARGET LOCKED" else "SCANNING",
-                    color = if (hasLockedTarget) Color(0xFFFFAA00) else Color(0xFF038C16),
+                    text = chipText,
+                    color = when {
+                        hasLockedTarget && lockLost -> Color(0xFFFF4444)
+                        hasLockedTarget -> Color(0xFFFFAA00)
+                        else -> Color(0xFF038C16)
+                    },
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Monospace

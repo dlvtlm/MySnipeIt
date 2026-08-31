@@ -280,7 +280,7 @@ private val G1_TABLE_CD = doubleArrayOf(
 internal fun g1Cd(mach: Double): Double {
     if (mach <= G1_TABLE_MACH.first()) return G1_TABLE_CD.first()
     if (mach >= G1_TABLE_MACH.last()) return G1_TABLE_CD.last()
-    // Linear search is fine — 55 entries, called ~500x per shot.
+    // Linear search is fine — 79 entries, called ~500x per shot.
     for (i in 1 until G1_TABLE_MACH.size) {
         if (mach <= G1_TABLE_MACH[i]) {
             val m0 = G1_TABLE_MACH[i - 1]

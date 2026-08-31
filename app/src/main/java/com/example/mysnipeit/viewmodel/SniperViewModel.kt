@@ -650,6 +650,14 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
             // only, so a slew must not move the elevation the operator set.
             currentServoVerticalDeg = latchedSensorData.value.servoVerticalDeg()?.toDouble(),
         )
+        // The Pi clears any active lock UNCONDITIONALLY when it receives
+        // set_servo_angles (it also kicks the servo FSM out of TARGET_LOCK),
+        // and it sends no message saying so. Mirror that here or the app would
+        // keep claiming TARGET LOCKED over a rig that has gone back to
+        // scanning. Normally the SLEW button is only offered while nothing is
+        // locked (isInteractive), so this is the race guard for a lock that
+        // landed between the alert being drawn and the tap.
+        deselectTarget()
         _activeAudioAlert.value = current.copy(
             isAccepted = true,
             acceptedAtMs = System.currentTimeMillis(),
@@ -666,6 +674,89 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
         lastDismissedBearing = current.rawAzimuthDeg
         lastDismissedAtMs = System.currentTimeMillis()
         _activeAudioAlert.value = null
+    }
+
+    // --- Lock-loss detection ------------------------------------------------
+    // The Pi never tells us a locked track died. Worse (confirmed by the Pi
+    // dev): when its tracker drops the locked track the Pi STAYS locked on the
+    // dead id, `select_detection_index` returns -1 every frame, and the servo
+    // freezes at its last commanded pose until the app sends unlock, a new
+    // lock, or set_servo_angles. So the only signal the app gets is the id
+    // going missing, and until the operator acts the rig is stuck.
+    //
+    // This flow makes that visible. It is DISPLAY STATE ONLY: it never
+    // re-acquires, re-identifies or renumbers anything, and it never clears
+    // the lock by itself — the operator decides when to release, because a
+    // missing id is also what a briefly occluded target looks like.
+    //
+    // Two rules keep it honest:
+    //  1. Skip frames do NOT count. They carry the Orin's per-frame ids, so
+    //     the locked id is absent by construction (see isFallbackFrame).
+    //     Counting them would raise LOCK LOST on every scan step and slew.
+    //  2. The grace window matches the Pi's own coast budget, so the warning
+    //     fires only once the Pi has had its full chance to re-associate.
+
+    /** How long the locked id must stay absent from TRACKED frames before the
+     *  UI calls it lost. 1.5 s is the Pi's MAX_COAST_MS: past it the Pi has
+     *  deleted the track, so a re-detection would arrive under a NEW id. */
+    val lockLostGraceMs: Long = 1_500L
+
+    private val _lockLost = MutableStateFlow(false)
+    /** True when a target is locked but its id has been absent from every
+     *  tracked frame for longer than [lockLostGraceMs]. Drives the LOCK LOST
+     *  indicator; the UNLOCK control stays live throughout. */
+    val lockLost: StateFlow<Boolean> = _lockLost.asStateFlow()
+
+    /** When the locked id first went missing from a tracked frame, or null
+     *  while it is present (or while nothing is locked). */
+    private var lockMissingSinceMs: Long? = null
+
+    /**
+     * Re-evaluate whether the locked id is still being reported, and flip
+     * [lockLost] accordingly.
+     *
+     * Called on every new detection batch and on the 500 ms tick. The tick
+     * matters: the flag has to be able to turn on with no new frame arriving.
+     * When the Pi goes silent the client's own 3 s staleness watchdog publishes
+     * an empty batch, which is a tracked frame that does not contain the id, so
+     * the timer starts there and the tick is what eventually trips the warning.
+     */
+    private fun refreshLockPresence(targets: List<DetectedTarget> = repository.detectedTargets.value) {
+        val lockedId = _uiState.value.selectedTargetId
+        if (lockedId.isNullOrEmpty()) {
+            clearLockLossState()
+            return
+        }
+        // Rule 1: a skip frame carries no stable ids, so it is evidence of
+        // nothing. Leave the timer exactly as it was and just re-check the
+        // clock below.
+        if (!targets.isFallbackFrame()) {
+            if (targets.any { it.id == lockedId }) {
+                lockMissingSinceMs = null
+            } else if (lockMissingSinceMs == null) {
+                lockMissingSinceMs = System.currentTimeMillis()
+            }
+        }
+        val since = lockMissingSinceMs
+        _lockLost.value = since != null && System.currentTimeMillis() - since > lockLostGraceMs
+    }
+
+    // Declared AFTER the state above, and in its own init block, because
+    // initializers and init blocks run in declaration order while
+    // viewModelScope's Main.immediate dispatcher starts a launch synchronously
+    // — a collector placed higher up would run refreshLockPresence() against a
+    // not-yet-constructed _lockLost. Two feeds: every detection batch, plus a
+    // tick so the warning can trip with no new frame arriving.
+    init {
+        viewModelScope.launch {
+            repository.detectedTargets.collect { refreshLockPresence(it) }
+        }
+        viewModelScope.launch {
+            while (isActive) {
+                delay(500)
+                refreshLockPresence()
+            }
+        }
     }
 
     /** Shortest-path angular distance between two bearings, in degrees. */
@@ -809,10 +900,21 @@ class SniperViewModel(application: Application) : AndroidViewModel(application) 
 
     fun selectTarget(targetId: String) {
         _uiState.value = _uiState.value.copy(selectedTargetId = targetId)
+        // A new (or cleared) lock starts its own lock-loss timer. Passing ""
+        // is how the UI clears the selection, so treat it like a deselect.
+        clearLockLossState()
     }
 
     fun deselectTarget() {
         _uiState.value = _uiState.value.copy(selectedTargetId = null)
+        clearLockLossState()
+    }
+
+    /** Reset the lock-loss timer + indicator. Called whenever the lock itself
+     *  changes, so a fresh lock never inherits the previous one's absence. */
+    private fun clearLockLossState() {
+        lockMissingSinceMs = null
+        _lockLost.value = false
     }
 
     fun lockTarget(targetId: String) {

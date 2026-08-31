@@ -29,6 +29,7 @@ import com.example.mysnipeit.data.models.distanceM
 import com.example.mysnipeit.data.models.gpsLatLon
 import com.example.mysnipeit.data.models.gpsSatellites
 import com.example.mysnipeit.data.models.humidityPct
+import com.example.mysnipeit.data.models.isFallbackFrame
 import com.example.mysnipeit.data.models.temperatureC
 import com.example.mysnipeit.data.models.windDirectionDeg
 import com.example.mysnipeit.data.models.windSpeedMps
@@ -63,6 +64,10 @@ fun DashboardScreen(
     firingSolution: FiringSolution?,
     systemStatus: SystemStatus,
     selectedTargetId: String?,
+    // True when the locked id has been missing from tracked frames longer than
+    // the Pi's coast window (see SniperViewModel.lockLost). Display only — the
+    // operator still owns when the lock is released.
+    lockLost: Boolean,
     streamReady: Boolean,
     rtspStreamUrl: String?,
     audioAlert: AudioAlert?,
@@ -82,7 +87,21 @@ fun DashboardScreen(
     onToggleTheme: () -> Unit = {},
 ) {
     val t = LocalTactical.current
-    val lockedTarget = detectedTargets.firstOrNull { it.id == selectedTargetId }
+    // The locked target's detection, resolved on TRACKED frames only and HELD
+    // across skip frames. A skip frame carries the Orin's per-frame ids, so the
+    // stable locked id is absent from it by construction even while the Pi's
+    // track is alive (see DetectedTarget.isFallbackFrame) — resolving against
+    // one would blink the firing card off on every scan step and slew. On a
+    // real tracked frame that lacks the id this still goes null immediately,
+    // which is correct: that is the actual signal the track is gone.
+    var lockedTarget by remember { mutableStateOf<DetectedTarget?>(null) }
+    LaunchedEffect(detectedTargets, selectedTargetId) {
+        lockedTarget = when {
+            selectedTargetId.isNullOrEmpty() -> null
+            detectedTargets.isFallbackFrame() -> lockedTarget
+            else -> detectedTargets.firstOrNull { it.id == selectedTargetId }
+        }
+    }
 
     // Real video health, reported by TacticalVideoPlayer from actual frame flow
     // (true while frames render, false when stalled/reconnecting). Drives the
@@ -153,6 +172,7 @@ fun DashboardScreen(
                 detectedTargets = detectedTargets,
                 firingSolution = firingSolution,
                 selectedTargetId = selectedTargetId,
+                lockLost = lockLost,
                 connectionState = systemStatus.connectionStatus,
                 streamReady = streamReady,
                 videoStreamUrl = rtspStreamUrl,

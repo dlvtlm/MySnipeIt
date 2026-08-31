@@ -113,6 +113,9 @@ fun SniperApp(viewModel: SniperViewModel) {
     val firingSolution by viewModel.firingSolution.collectAsStateWithLifecycle()
     val systemStatus by viewModel.systemStatus.collectAsStateWithLifecycle()
     val selectedTargetId = uiState.selectedTargetId
+    // Locked id absent from tracked frames past the Pi's coast window. Drives
+    // the dashboard's LOCK LOST warning; it never clears the lock by itself.
+    val lockLost by viewModel.lockLost.collectAsStateWithLifecycle()
     val streamReady by viewModel.streamReady.collectAsState()
     val rtspStreamUrl by viewModel.rtspStreamUrl.collectAsState()
     val darkTheme by viewModel.darkTheme.collectAsStateWithLifecycle()
@@ -192,6 +195,7 @@ fun SniperApp(viewModel: SniperViewModel) {
                 firingSolution = firingSolution,
                 systemStatus = systemStatus,
                 selectedTargetId = selectedTargetId,
+                lockLost = lockLost,
                 streamReady = streamReady,
                 rtspStreamUrl = rtspStreamUrl,
                 audioAlert = activeAudioAlert,
