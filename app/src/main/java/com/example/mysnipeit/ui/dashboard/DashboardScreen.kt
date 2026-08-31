@@ -202,9 +202,12 @@ fun DashboardScreen(
 
             // Top-right: firing-solution card (shown only when a target is
             // locked AND the app's calculator has produced a valid solution).
-            if (lockedTarget != null && firingSolution != null) {
+            // Read the delegated state into a local first: `by remember` gives
+            // a delegated property, which Kotlin will not smart-cast.
+            val locked = lockedTarget
+            if (locked != null && firingSolution != null) {
                 FiringSolutionCard(
-                    targetId = lockedTarget.id,
+                    targetId = locked.id,
                     solution = firingSolution,
                     modifier = Modifier
                         .align(Alignment.TopEnd)
